@@ -88,34 +88,33 @@ function App() {
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
 
-  // Parámetros de simulación y optimización
+  // Simulation and optimization parameters
   const [daysToPredict, setDaysToPredict] = useState<number>(252);
   const [simulations, setSimulations] = useState<number>(500);
   const [objective, setObjective] = useState<"min_variance" | "max_sharpe">("min_variance");
   const [riskFreeRate, setRiskFreeRate] = useState<number>(0.04);
   const [maxDisplayPaths, setMaxDisplayPaths] = useState<number>(40);
 
-  // Estados de datos
+  // Data states
   const [mcData, setMcData] = useState<MonteCarloResponse | null>(null);
   const [corrData, setCorrData] = useState<CorrelationResponse | null>(null);
   const [optData, setOptData] = useState<OptimizeResponse | null>(null);
 
-  // Estados de carga y error
+  // Loading and error states
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Lista consolidada única de tickers disponibles
+  // Consolidated unique list of available tickers
   const allAvailableTickers = useMemo(() => {
     const list = Array.from(new Set([...nasdaqData, ...nyseData]));
     return list.sort();
   }, []);
 
-  // Coincidencias para la barra de búsqueda cuando hay al menos 2 caracteres
+  // Search suggestions when at least 2 characters are entered
   const suggestions = useMemo(() => {
     const trimmed = searchTerm.trim().toUpperCase();
     if (trimmed.length < 2) return [];
 
-    // Priorizamos los que comienzan con el término y luego los que lo contienen
     const startsWith = allAvailableTickers.filter(
       (t) => t.startsWith(trimmed) && !selectedTickers.includes(t)
     );
@@ -130,11 +129,11 @@ function App() {
     const clean = tickerToAdd.trim().toUpperCase();
     if (!clean) return;
     if (selectedTickers.includes(clean)) {
-      alert("El activo ya se encuentra seleccionado.");
+      alert("Asset is already selected.");
       return;
     }
     if (selectedTickers.length >= 10) {
-      alert("Se requiere exactamente 10 tickers. Elimina uno antes de agregar otro.");
+      alert("Exactly 10 tickers are required. Remove one before adding another.");
       return;
     }
     setSelectedTickers([...selectedTickers, clean]);
@@ -152,7 +151,7 @@ function App() {
 
   const executeAll = async () => {
     if (selectedTickers.length !== 10) {
-      setErrorMsg("Debes seleccionar exactamente 10 tickers diferentes según los requerimientos del backend.");
+      setErrorMsg("You must select exactly 10 distinct tickers according to backend requirements.");
       return;
     }
 
@@ -192,15 +191,15 @@ function App() {
 
       if (!corrRes.ok) {
         const err = await corrRes.json().catch(() => ({}));
-        throw new Error(`Error en Correlación: ${err.detail || corrRes.statusText}`);
+        throw new Error(`Correlation Error: ${err.detail || corrRes.statusText}`);
       }
       if (!mcRes.ok) {
         const err = await mcRes.json().catch(() => ({}));
-        throw new Error(`Error en Monte Carlo: ${err.detail || mcRes.statusText}`);
+        throw new Error(`Monte Carlo Error: ${err.detail || mcRes.statusText}`);
       }
       if (!optRes.ok) {
         const err = await optRes.json().catch(() => ({}));
-        throw new Error(`Error en Optimización: ${err.detail || optRes.statusText}`);
+        throw new Error(`Optimization Error: ${err.detail || optRes.statusText}`);
       }
 
       const corrJson = await corrRes.json();
@@ -211,30 +210,30 @@ function App() {
       setMcData(mcJson);
       setOptData(optJson);
     } catch (err: any) {
-      setErrorMsg(err.message || "Error al conectar con las APIs de backend.");
+      setErrorMsg(err.message || "Failed to connect to backend APIs.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Carga inicial automática al montar el componente
+  // Initial automatic load
   useEffect(() => {
     executeAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Preparación del gráfico de Chart.js para Monte Carlo
+  // Chart.js data configuration for Monte Carlo
   const chartData = useMemo(() => {
     if (!mcData) return null;
 
-    const labels = mcData.days.map((d) => `Día ${d}`);
+    const labels = mcData.days.map((d) => `Day ${d}`);
     const datasets: any[] = [];
 
-    // Trayectorias individuales (muestreo de las primeras N rutas)
+    // Individual sample trajectories
     const sampledTrajectories = mcData.trajectories.slice(0, maxDisplayPaths);
     sampledTrajectories.forEach((traj, idx) => {
       datasets.push({
-        label: `Ruta ${idx + 1}`,
+        label: `Path ${idx + 1}`,
         data: traj,
         borderColor: "rgba(99, 102, 241, 0.18)",
         borderWidth: 1,
@@ -244,11 +243,11 @@ function App() {
       });
     });
 
-    // Bandas percentiles clave destacadas
+    // Key percentile bands
     if (mcData.percentile_bands) {
       if (mcData.percentile_bands["95"]) {
         datasets.push({
-          label: "Percentil 95%",
+          label: "95th Percentile",
           data: mcData.percentile_bands["95"],
           borderColor: "#10b981",
           borderWidth: 2.5,
@@ -259,7 +258,7 @@ function App() {
       }
       if (mcData.percentile_bands["50"]) {
         datasets.push({
-          label: "Mediana (P50)",
+          label: "Median (P50)",
           data: mcData.percentile_bands["50"],
           borderColor: "#3b82f6",
           borderWidth: 3,
@@ -269,7 +268,7 @@ function App() {
       }
       if (mcData.percentile_bands["5"]) {
         datasets.push({
-          label: "Percentil 5%",
+          label: "5th Percentile",
           data: mcData.percentile_bands["5"],
           borderColor: "#ef4444",
           borderWidth: 2.5,
@@ -292,7 +291,7 @@ function App() {
         position: "top" as const,
         labels: {
           filter: (item: any) =>
-            item.text.includes("Percentil") || item.text.includes("Mediana"),
+            item.text.includes("Percentile") || item.text.includes("Median"),
           color: "#e2e8f0",
           font: { weight: "600" },
         },
@@ -315,7 +314,7 @@ function App() {
         },
         title: {
           display: true,
-          text: "Valor del Portafolio Relativo (Base 100%)",
+          text: "Relative Portfolio Value (Base 100%)",
           color: "#94a3b8",
         },
       },
@@ -338,27 +337,27 @@ function App() {
         <div className="header-content">
           <h1>Monte Carlo Risk & Portfolio Optimizer</h1>
           <p className="subtitle">
-            Simulador de riesgo multiactivo, análisis de correlación y optimización media-varianza / Sharpe
+            Multi-asset risk simulator, correlation analysis, and mean-variance/Sharpe optimization
           </p>
         </div>
       </header>
 
       <main className="app-main">
-        {/* Panel de Configuración y Búsqueda */}
+        {/* Section 1: Asset Selection & Search */}
         <section className="config-card">
-          <h2>1. Selección de Activos ({selectedTickers.length}/10)</h2>
+          <h2>1. Asset Selection ({selectedTickers.length}/10)</h2>
           <p className="instruction">
-            El modelo cuantitativo requiere un portafolio de <strong>exactamente 10 activos</strong> distintos.
+            The quantitative model requires a portfolio of <strong>exactly 10 distinct assets</strong>.
           </p>
 
-          {/* Search bar con sugerencias dinámicas */}
+          {/* Search bar with dynamic suggestions */}
           <div className="search-container">
             <div className="search-input-wrapper">
               <span className="search-icon">🔍</span>
               <input
                 type="text"
                 className="search-input"
-                placeholder="Escribe al menos 2 letras para buscar en NASDAQ / NYSE (ej: AP, TS, NV)..."
+                placeholder="Type at least 2 letters to search NASDAQ / NYSE (e.g., AP, TS, NV)..."
                 value={searchTerm}
                 onChange={(e) => {
                   setSearchTerm(e.target.value);
@@ -377,7 +376,7 @@ function App() {
               )}
             </div>
 
-            {/* Menú desplegable con exactamente hasta 7 sugerencias */}
+            {/* Dropdown with up to 7 suggestions */}
             {isDropdownOpen && suggestions.length > 0 && (
               <ul className="suggestions-dropdown">
                 {suggestions.map((ticker) => (
@@ -387,7 +386,7 @@ function App() {
                     className="suggestion-item"
                   >
                     <span className="ticker-badge">{ticker}</span>
-                    <span className="ticker-action">+ Agregar al portafolio</span>
+                    <span className="ticker-action">+ Add to portfolio</span>
                   </li>
                 ))}
               </ul>
@@ -395,12 +394,12 @@ function App() {
 
             {isDropdownOpen && searchTerm.trim().length >= 2 && suggestions.length === 0 && (
               <div className="no-suggestions">
-                No se encontraron activos coincidentes disponibles
+                No matching assets available
               </div>
             )}
           </div>
 
-          {/* Chips de activos seleccionados */}
+          {/* Selected asset chips */}
           <div className="selected-tickers-container">
             {selectedTickers.map((ticker) => (
               <div key={ticker} className="ticker-chip">
@@ -408,7 +407,7 @@ function App() {
                 <button
                   type="button"
                   onClick={() => removeTicker(ticker)}
-                  title={`Eliminar ${ticker}`}
+                  title={`Remove ${ticker}`}
                   className="chip-remove"
                 >
                   ×
@@ -419,14 +418,14 @@ function App() {
 
           {selectedTickers.length !== 10 && (
             <div className="ticker-warning">
-              ⚠️ Tienes {selectedTickers.length} tickers seleccionados. Agrega o elimina hasta tener exactamente 10.
+              ⚠️ You have {selectedTickers.length} tickers selected. Add or remove until you have exactly 10.
             </div>
           )}
 
-          {/* Parámetros de Simulación */}
+          {/* Simulation Controls */}
           <div className="controls-grid">
             <div className="control-group">
-              <label>Días a proyectar (Trading days):</label>
+              <label>Forecast Horizon (Trading days):</label>
               <input
                 type="number"
                 min={5}
@@ -434,11 +433,11 @@ function App() {
                 value={daysToPredict}
                 onChange={(e) => setDaysToPredict(Number(e.target.value))}
               />
-              <span className="field-hint">Min: 5 | Max: 504 (252 ≈ 1 año)</span>
+              <span className="field-hint">Min: 5 | Max: 504 (252 ≈ 1 year)</span>
             </div>
 
             <div className="control-group">
-              <label>Número de simulaciones:</label>
+              <label>Number of Simulations:</label>
               <input
                 type="number"
                 min={100}
@@ -451,18 +450,18 @@ function App() {
             </div>
 
             <div className="control-group">
-              <label>Objetivo de Optimización:</label>
+              <label>Optimization Objective:</label>
               <select
                 value={objective}
                 onChange={(e) => setObjective(e.target.value as any)}
               >
-                <option value="min_variance">Mínima Varianza (Min Risk)</option>
-                <option value="max_sharpe">Máximo Sharpe Ratio (Max Retorno/Riesgo)</option>
+                <option value="min_variance">Minimum Variance (Min Risk)</option>
+                <option value="max_sharpe">Maximum Sharpe Ratio (Max Return/Risk)</option>
               </select>
             </div>
 
             <div className="control-group">
-              <label>Tasa libre de riesgo (Risk Free Rate):</label>
+              <label>Risk-Free Rate:</label>
               <input
                 type="number"
                 min={0}
@@ -471,7 +470,7 @@ function App() {
                 value={riskFreeRate}
                 onChange={(e) => setRiskFreeRate(Number(e.target.value))}
               />
-              <span className="field-hint">Ejemplo: 0.04 = 4.0% anual</span>
+              <span className="field-hint">Example: 0.04 = 4.0% annualized</span>
             </div>
           </div>
 
@@ -482,7 +481,7 @@ function App() {
               onClick={executeAll}
               disabled={loading || selectedTickers.length !== 10}
             >
-              {loading ? "Calculando modelos cuantitativos..." : "▶ Ejecutar Simulación y Optimización"}
+              {loading ? "Computing quantitative models..." : "▶ Run Simulation & Optimization"}
             </button>
             <button
               type="button"
@@ -490,27 +489,27 @@ function App() {
               onClick={resetDefaultTickers}
               disabled={loading}
             >
-              Restablecer Top 10 Inicial
+              Reset to Initial Top 10
             </button>
           </div>
 
           {errorMsg && <div className="error-banner">❌ {errorMsg}</div>}
         </section>
 
-        {/* Sección 2: Gráfico de Monte Carlo */}
+        {/* Section 2: Monte Carlo Simulation Chart */}
         <section className="dashboard-section">
           <div className="section-header">
-            <h2>2. Simulación Monte Carlo (Paths & Percentiles)</h2>
+            <h2>2. Monte Carlo Simulation (Paths & Percentiles)</h2>
             <div className="display-options">
-              <label>Rutas visualizadas:</label>
+              <label>Displayed paths:</label>
               <select
                 value={maxDisplayPaths}
                 onChange={(e) => setMaxDisplayPaths(Number(e.target.value))}
               >
-                <option value={20}>20 rutas</option>
-                <option value={40}>40 rutas</option>
-                <option value={80}>80 rutas</option>
-                <option value={150}>150 rutas</option>
+                <option value={20}>20 paths</option>
+                <option value={40}>40 paths</option>
+                <option value={80}>80 paths</option>
+                <option value={150}>150 paths</option>
               </select>
             </div>
           </div>
@@ -518,41 +517,41 @@ function App() {
           {mcData?.statistics && (
             <div className="stats-cards-grid">
               <div className="stat-card">
-                <span className="stat-label">Valor Final Promedio (Media)</span>
+                <span className="stat-label">Expected Terminal Value (Mean)</span>
                 <span className="stat-value">
                   {(mcData.statistics.mean_terminal_value * 100).toFixed(2)}%
                 </span>
                 <span className="stat-sub">
-                  Retorno: {((mcData.statistics.mean_terminal_value - 1) * 100).toFixed(2)}%
+                  Return: {((mcData.statistics.mean_terminal_value - 1) * 100).toFixed(2)}%
                 </span>
               </div>
               <div className="stat-card">
-                <span className="stat-label">Mediana Terminal</span>
+                <span className="stat-label">Terminal Median</span>
                 <span className="stat-value">
                   {(mcData.statistics.median_terminal_value * 100).toFixed(2)}%
                 </span>
-                <span className="stat-sub">Percentil 50</span>
+                <span className="stat-sub">50th Percentile</span>
               </div>
               <div className="stat-card warning">
-                <span className="stat-label">Probabilidad de Pérdida</span>
+                <span className="stat-label">Probability of Loss</span>
                 <span className="stat-value">
                   {(mcData.statistics.probability_of_loss * 100).toFixed(2)}%
                 </span>
-                <span className="stat-sub">P(Retorno &lt; 0)</span>
+                <span className="stat-sub">P(Return &lt; 0)</span>
               </div>
               <div className="stat-card">
-                <span className="stat-label">Percentil 5% (VaR 95%)</span>
+                <span className="stat-label">5th Percentile (95% VaR)</span>
                 <span className="stat-value">
                   {(mcData.statistics.percentile_5_terminal_value * 100).toFixed(2)}%
                 </span>
-                <span className="stat-sub">Escenario adverso</span>
+                <span className="stat-sub">Adverse scenario</span>
               </div>
               <div className="stat-card success">
-                <span className="stat-label">Percentil 95%</span>
+                <span className="stat-label">95th Percentile</span>
                 <span className="stat-value">
                   {(mcData.statistics.percentile_95_terminal_value * 100).toFixed(2)}%
                 </span>
-                <span className="stat-sub">Escenario optimista</span>
+                <span className="stat-sub">Optimistic scenario</span>
               </div>
             </div>
           )}
@@ -562,17 +561,17 @@ function App() {
               <Line data={chartData} options={chartOptions} />
             ) : (
               <div className="chart-placeholder">
-                {loading ? "Generando simulaciones estocásticas..." : "Ejecuta la simulación para visualizar los paths"}
+                {loading ? "Generating stochastic simulations..." : "Run simulation to view paths"}
               </div>
             )}
           </div>
         </section>
 
-        {/* Sección 3: Matriz de Correlación */}
+        {/* Section 3: Correlation Matrix */}
         <section className="dashboard-section">
-          <h2>3. Matriz de Correlación de Rendimientos Diarios (Pearson)</h2>
+          <h2>3. Daily Returns Correlation Matrix (Pearson)</h2>
           <p className="instruction">
-            Observaciones analizadas: {corrData?.observations ?? 0} fechas comunes de negociación histórica.
+            Observations analyzed: {corrData?.observations ?? 0} common historical trading dates.
           </p>
 
           {corrData?.correlation_matrix ? (
@@ -580,7 +579,7 @@ function App() {
               <table className="correlation-table">
                 <thead>
                   <tr>
-                    <th className="sticky-col">Activo</th>
+                    <th className="sticky-col">Asset</th>
                     {corrData.tickers.map((ticker) => (
                       <th key={ticker}>{ticker}</th>
                     ))}
@@ -597,7 +596,7 @@ function App() {
                             key={colTicker}
                             style={{ backgroundColor: getHeatmapColor(val) }}
                             className="corr-cell"
-                            title={`Correlación entre ${rowTicker} y ${colTicker}: ${val.toFixed(4)}`}
+                            title={`Correlation between ${rowTicker} and ${colTicker}: ${val.toFixed(4)}`}
                           >
                             {val.toFixed(2)}
                           </td>
@@ -610,34 +609,34 @@ function App() {
             </div>
           ) : (
             <div className="table-placeholder">
-              {loading ? "Descargando precios históricos y estimando correlaciones..." : "No hay datos de correlación"}
+              {loading ? "Downloading historical prices and estimating correlations..." : "No correlation data available"}
             </div>
           )}
         </section>
 
-        {/* Sección 4: Tabla de Optimización de Portafolio */}
+        {/* Section 4: Portfolio Optimization Table */}
         <section className="dashboard-section">
-          <h2>4. Optimización de Portafolio (Markowitz SLSQP)</h2>
+          <h2>4. Portfolio Optimization (Markowitz SLSQP)</h2>
           <p className="instruction">
-            Objetivo:{" "}
+            Objective:{" "}
             <strong>
               {optData?.objective === "max_sharpe"
-                ? "Máximo Ratio de Sharpe (Mayor rentabilidad ajustada al riesgo)"
-                : "Mínima Varianza (Menor volatilidad del portafolio)"}
+                ? "Maximum Sharpe Ratio (Highest risk-adjusted return)"
+                : "Minimum Variance (Lowest portfolio volatility)"}
             </strong>{" "}
-            | Ponderación mínima por activo: 5.0%
+            | Minimum asset allocation weight: 5.0%
           </p>
 
           {optData?.metrics && (
             <div className="metrics-banner">
               <div className="metric-item">
-                <span className="metric-label">Retorno Anual Esperado:</span>
+                <span className="metric-label">Expected Annual Return:</span>
                 <span className="metric-num">
                   {(optData.metrics.expected_annual_return * 100).toFixed(2)}%
                 </span>
               </div>
               <div className="metric-item">
-                <span className="metric-label">Volatilidad Anual (σ):</span>
+                <span className="metric-label">Annual Volatility (σ):</span>
                 <span className="metric-num">
                   {(optData.metrics.annual_volatility * 100).toFixed(2)}%
                 </span>
@@ -651,13 +650,13 @@ function App() {
                 </span>
               </div>
               <div className="metric-item">
-                <span className="metric-label">Varianza Anual (σ²):</span>
+                <span className="metric-label">Annual Variance (σ²):</span>
                 <span className="metric-num">
                   {optData.metrics.annual_variance.toFixed(4)}
                 </span>
               </div>
               <div className="metric-item">
-                <span className="metric-label">Suma de Pesos:</span>
+                <span className="metric-label">Total Weights Sum:</span>
                 <span className="metric-num">
                   {(optData.metrics.weights_sum * 100).toFixed(1)}%
                 </span>
@@ -671,9 +670,9 @@ function App() {
                 <thead>
                   <tr>
                     <th>Ticker</th>
-                    <th>Peso Óptimo (%)</th>
-                    <th>Peso Numérico</th>
-                    <th>Distribución Visual</th>
+                    <th>Optimal Weight (%)</th>
+                    <th>Numerical Weight</th>
+                    <th>Visual Allocation</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -704,7 +703,7 @@ function App() {
             </div>
           ) : (
             <div className="table-placeholder">
-              {loading ? "Resolviendo frontera eficiente..." : "No hay datos de optimización"}
+              {loading ? "Solving efficient frontier..." : "No optimization data available"}
             </div>
           )}
         </section>

@@ -21,7 +21,7 @@ ChartJS.register(
   LineElement,
   Title,
   Tooltip,
-  Legend
+  Legend,
 );
 
 const API_BASE = "http://localhost:8000";
@@ -70,6 +70,25 @@ interface OptimizeResponse {
   };
 }
 
+interface PortfolioRequestPayload {
+  tickers: string[];
+  days_to_predict: number;
+  simulations: number;
+}
+
+interface OptimizeRequestPayload {
+  tickers: string[];
+  objective: "min_variance" | "max_sharpe";
+  risk_free_rate: number;
+}
+
+interface MonteCarloRequestPayload {
+  tickers: string[];
+  days_to_predict: number;
+  simulations: number;
+  weights: Record<string, number>;
+}
+
 const DEFAULT_TICKERS = [
   "TSLA",
   "AAPL",
@@ -84,14 +103,17 @@ const DEFAULT_TICKERS = [
 ];
 
 function App() {
-  const [selectedTickers, setSelectedTickers] = useState<string[]>(DEFAULT_TICKERS);
+  const [selectedTickers, setSelectedTickers] =
+    useState<string[]>(DEFAULT_TICKERS);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
 
   // Simulation and optimization parameters
   const [daysToPredict, setDaysToPredict] = useState<number>(252);
   const [simulations, setSimulations] = useState<number>(500);
-  const [objective, setObjective] = useState<"min_variance" | "max_sharpe">("min_variance");
+  const [objective, setObjective] = useState<"min_variance" | "max_sharpe">(
+    "min_variance",
+  );
   const [riskFreeRate, setRiskFreeRate] = useState<number>(0.04);
   const [maxDisplayPaths, setMaxDisplayPaths] = useState<number>(40);
 
@@ -116,10 +138,13 @@ function App() {
     if (trimmed.length < 2) return [];
 
     const startsWith = allAvailableTickers.filter(
-      (t) => t.startsWith(trimmed) && !selectedTickers.includes(t)
+      (t) => t.startsWith(trimmed) && !selectedTickers.includes(t),
     );
     const contains = allAvailableTickers.filter(
-      (t) => !t.startsWith(trimmed) && t.includes(trimmed) && !selectedTickers.includes(t)
+      (t) =>
+        !t.startsWith(trimmed) &&
+        t.includes(trimmed) &&
+        !selectedTickers.includes(t),
     );
 
     return [...startsWith, ...contains].slice(0, 7);
@@ -133,7 +158,9 @@ function App() {
       return;
     }
     if (selectedTickers.length >= 10) {
-      alert("Exactly 10 tickers are required. Remove one before adding another.");
+      alert(
+        "Exactly 10 tickers are required. Remove one before adding another.",
+      );
       return;
     }
     setSelectedTickers([...selectedTickers, clean]);
@@ -151,33 +178,31 @@ function App() {
 
   const executeAll = async () => {
     if (selectedTickers.length !== 10) {
-      setErrorMsg("You must select exactly 10 distinct tickers according to backend requirements.");
+      setErrorMsg(
+        "You must select exactly 10 distinct tickers according to backend requirements.",
+      );
       return;
     }
 
     setLoading(true);
     setErrorMsg(null);
 
-    const portfolioPayload = {
+    const portfolioPayload: PortfolioRequestPayload = {
       tickers: selectedTickers,
       days_to_predict: Number(daysToPredict),
       simulations: Number(simulations),
     };
 
-    const optimizePayload = {
+    const optimizePayload: OptimizeRequestPayload = {
       tickers: selectedTickers,
       objective: objective,
       risk_free_rate: Number(riskFreeRate),
     };
 
     try {
-      const [corrRes, mcRes, optRes] = await Promise.all([
+      // 1. Ejecutar optimización y correlación en paralelo
+      const [corrRes, optRes] = await Promise.all([
         fetch(`${API_BASE}/api/correlation`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(portfolioPayload),
-        }),
-        fetch(`${API_BASE}/api/monte-carlo`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(portfolioPayload),
@@ -190,27 +215,51 @@ function App() {
       ]);
 
       if (!corrRes.ok) {
-        const err = await corrRes.json().catch(() => ({}));
-        throw new Error(`Correlation Error: ${err.detail || corrRes.statusText}`);
-      }
-      if (!mcRes.ok) {
-        const err = await mcRes.json().catch(() => ({}));
-        throw new Error(`Monte Carlo Error: ${err.detail || mcRes.statusText}`);
+        const err = (await corrRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(
+          `Correlation Error: ${err.detail ?? corrRes.statusText}`,
+        );
       }
       if (!optRes.ok) {
-        const err = await optRes.json().catch(() => ({}));
-        throw new Error(`Optimization Error: ${err.detail || optRes.statusText}`);
+        const err = (await optRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(
+          `Optimization Error: ${err.detail ?? optRes.statusText}`,
+        );
       }
 
-      const corrJson = await corrRes.json();
-      const mcJson = await mcRes.json();
-      const optJson = await optRes.json();
+      const corrJson: CorrelationResponse = await corrRes.json();
+      const optJson: OptimizeResponse = await optRes.json();
+
+      // 2. Con los pesos óptimos calculados, ejecutar la simulación de Monte Carlo
+      const mcPayload: MonteCarloRequestPayload = {
+        tickers: selectedTickers,
+        days_to_predict: Number(daysToPredict),
+        simulations: Number(simulations),
+        weights: optJson.weights,
+      };
+
+      const mcRes = await fetch(`${API_BASE}/api/monte-carlo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mcPayload),
+      });
+
+      if (!mcRes.ok) {
+        const err = (await mcRes.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(`Monte Carlo Error: ${err.detail ?? mcRes.statusText}`);
+      }
+
+      const mcJson: MonteCarloResponse = await mcRes.json();
 
       setCorrData(corrJson);
-      setMcData(mcJson);
       setOptData(optJson);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Failed to connect to backend APIs.");
+      setMcData(mcJson);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrorMsg(err.message);
+      } else {
+        setErrorMsg("Failed to connect to backend APIs.");
+      }
     } finally {
       setLoading(false);
     }
@@ -337,7 +386,8 @@ function App() {
         <div className="header-content">
           <h1>Monte Carlo Risk & Portfolio Optimizer</h1>
           <p className="subtitle">
-            Multi-asset risk simulator, correlation analysis, and mean-variance/Sharpe optimization
+            Multi-asset risk simulator, correlation analysis, and
+            mean-variance/Sharpe optimization
           </p>
         </div>
       </header>
@@ -347,7 +397,8 @@ function App() {
         <section className="config-card">
           <h2>1. Asset Selection ({selectedTickers.length}/10)</h2>
           <p className="instruction">
-            The quantitative model requires a portfolio of <strong>exactly 10 distinct assets</strong>.
+            The quantitative model requires a portfolio of{" "}
+            <strong>exactly 10 distinct assets</strong>.
           </p>
 
           {/* Search bar with dynamic suggestions */}
@@ -392,11 +443,13 @@ function App() {
               </ul>
             )}
 
-            {isDropdownOpen && searchTerm.trim().length >= 2 && suggestions.length === 0 && (
-              <div className="no-suggestions">
-                No matching assets available
-              </div>
-            )}
+            {isDropdownOpen &&
+              searchTerm.trim().length >= 2 &&
+              suggestions.length === 0 && (
+                <div className="no-suggestions">
+                  No matching assets available
+                </div>
+              )}
           </div>
 
           {/* Selected asset chips */}
@@ -418,7 +471,8 @@ function App() {
 
           {selectedTickers.length !== 10 && (
             <div className="ticker-warning">
-              ⚠️ You have {selectedTickers.length} tickers selected. Add or remove until you have exactly 10.
+              ⚠️ You have {selectedTickers.length} tickers selected. Add or
+              remove until you have exactly 10.
             </div>
           )}
 
@@ -433,7 +487,9 @@ function App() {
                 value={daysToPredict}
                 onChange={(e) => setDaysToPredict(Number(e.target.value))}
               />
-              <span className="field-hint">Min: 5 | Max: 504 (252 ≈ 1 year)</span>
+              <span className="field-hint">
+                Min: 5 | Max: 504 (252 ≈ 1 year)
+              </span>
             </div>
 
             <div className="control-group">
@@ -455,8 +511,12 @@ function App() {
                 value={objective}
                 onChange={(e) => setObjective(e.target.value as any)}
               >
-                <option value="min_variance">Minimum Variance (Min Risk)</option>
-                <option value="max_sharpe">Maximum Sharpe Ratio (Max Return/Risk)</option>
+                <option value="min_variance">
+                  Minimum Variance (Min Risk)
+                </option>
+                <option value="max_sharpe">
+                  Maximum Sharpe Ratio (Max Return/Risk)
+                </option>
               </select>
             </div>
 
@@ -470,7 +530,9 @@ function App() {
                 value={riskFreeRate}
                 onChange={(e) => setRiskFreeRate(Number(e.target.value))}
               />
-              <span className="field-hint">Example: 0.04 = 4.0% annualized</span>
+              <span className="field-hint">
+                Example: 0.04 = 4.0% annualized
+              </span>
             </div>
           </div>
 
@@ -481,7 +543,9 @@ function App() {
               onClick={executeAll}
               disabled={loading || selectedTickers.length !== 10}
             >
-              {loading ? "Computing quantitative models..." : "▶ Run Simulation & Optimization"}
+              {loading
+                ? "Computing quantitative models..."
+                : "▶ Run Simulation & Optimization"}
             </button>
             <button
               type="button"
@@ -517,12 +581,18 @@ function App() {
           {mcData?.statistics && (
             <div className="stats-cards-grid">
               <div className="stat-card">
-                <span className="stat-label">Expected Terminal Value (Mean)</span>
+                <span className="stat-label">
+                  Expected Terminal Value (Mean)
+                </span>
                 <span className="stat-value">
                   {(mcData.statistics.mean_terminal_value * 100).toFixed(2)}%
                 </span>
                 <span className="stat-sub">
-                  Return: {((mcData.statistics.mean_terminal_value - 1) * 100).toFixed(2)}%
+                  Return:{" "}
+                  {((mcData.statistics.mean_terminal_value - 1) * 100).toFixed(
+                    2,
+                  )}
+                  %
                 </span>
               </div>
               <div className="stat-card">
@@ -542,14 +612,20 @@ function App() {
               <div className="stat-card">
                 <span className="stat-label">5th Percentile (95% VaR)</span>
                 <span className="stat-value">
-                  {(mcData.statistics.percentile_5_terminal_value * 100).toFixed(2)}%
+                  {(
+                    mcData.statistics.percentile_5_terminal_value * 100
+                  ).toFixed(2)}
+                  %
                 </span>
                 <span className="stat-sub">Adverse scenario</span>
               </div>
               <div className="stat-card success">
                 <span className="stat-label">95th Percentile</span>
                 <span className="stat-value">
-                  {(mcData.statistics.percentile_95_terminal_value * 100).toFixed(2)}%
+                  {(
+                    mcData.statistics.percentile_95_terminal_value * 100
+                  ).toFixed(2)}
+                  %
                 </span>
                 <span className="stat-sub">Optimistic scenario</span>
               </div>
@@ -561,7 +637,9 @@ function App() {
               <Line data={chartData} options={chartOptions} />
             ) : (
               <div className="chart-placeholder">
-                {loading ? "Generating stochastic simulations..." : "Run simulation to view paths"}
+                {loading
+                  ? "Generating stochastic simulations..."
+                  : "Run simulation to view paths"}
               </div>
             )}
           </div>
@@ -571,7 +649,8 @@ function App() {
         <section className="dashboard-section">
           <h2>3. Daily Returns Correlation Matrix (Pearson)</h2>
           <p className="instruction">
-            Observations analyzed: {corrData?.observations ?? 0} common historical trading dates.
+            Observations analyzed: {corrData?.observations ?? 0} common
+            historical trading dates.
           </p>
 
           {corrData?.correlation_matrix ? (
@@ -588,9 +667,13 @@ function App() {
                 <tbody>
                   {corrData.tickers.map((rowTicker) => (
                     <tr key={rowTicker}>
-                      <td className="sticky-col ticker-row-header">{rowTicker}</td>
+                      <td className="sticky-col ticker-row-header">
+                        {rowTicker}
+                      </td>
                       {corrData.tickers.map((colTicker) => {
-                        const val = corrData.correlation_matrix[rowTicker]?.[colTicker] ?? 0;
+                        const val =
+                          corrData.correlation_matrix[rowTicker]?.[colTicker] ??
+                          0;
                         return (
                           <td
                             key={colTicker}
@@ -609,7 +692,9 @@ function App() {
             </div>
           ) : (
             <div className="table-placeholder">
-              {loading ? "Downloading historical prices and estimating correlations..." : "No correlation data available"}
+              {loading
+                ? "Downloading historical prices and estimating correlations..."
+                : "No correlation data available"}
             </div>
           )}
         </section>
@@ -691,7 +776,9 @@ function App() {
                             <div className="bar-track">
                               <div
                                 className="bar-fill"
-                                style={{ width: `${Math.min(100, Math.max(5, pct))}%` }}
+                                style={{
+                                  width: `${Math.min(100, Math.max(5, pct))}%`,
+                                }}
                               />
                             </div>
                           </td>
@@ -703,7 +790,9 @@ function App() {
             </div>
           ) : (
             <div className="table-placeholder">
-              {loading ? "Solving efficient frontier..." : "No optimization data available"}
+              {loading
+                ? "Solving efficient frontier..."
+                : "No optimization data available"}
             </div>
           )}
         </section>

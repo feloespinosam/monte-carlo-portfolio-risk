@@ -60,6 +60,9 @@ class OptimizeRequest(BaseModel):
 
         return cleaned
 
+class MonteCarloRequest(PortfolioRequest):
+    weights: dict[str, float] | None = None
+
 def get_historical_data(tickers: list[str]) -> pd.DataFrame:
     """Download adjusted historical prices for all assets."""
 
@@ -152,6 +155,69 @@ def get_covariance(returns: pd.DataFrame) -> pd.DataFrame:
 
     return covariance
 
+def calculate_optimal_weights(
+    returns: pd.DataFrame,
+    objective: Literal["min_variance", "max_sharpe"],
+    risk_free_rate: float,
+) -> np.ndarray:
+    n_assets = returns.shape[1]
+
+    # Historical daily returns and covariance.
+    mean_daily = returns.mean().to_numpy()
+    covariance_daily = returns.cov().to_numpy()
+
+    # Annualize estimates.
+    mean_annual = mean_daily * 252
+    covariance_annual = covariance_daily * 252
+
+    initial_weights = np.full(n_assets, 1.0 / n_assets)
+
+    def portfolio_variance(weights):
+        return float(weights @ covariance_annual @ weights)
+
+    def negative_sharpe(weights):
+        expected_return = float(weights @ mean_annual)
+        variance = portfolio_variance(weights)
+        volatility = np.sqrt(max(variance, 0.0))
+
+        if volatility < 1e-12:
+            return 1e6
+
+        return -(expected_return - risk_free_rate) / volatility
+
+    if objective == "min_variance":
+        objective_function = portfolio_variance
+    else:
+        objective_function = negative_sharpe
+
+    min_weight = 0.05
+
+    result = minimize(
+        objective_function,
+        initial_weights,
+        method="SLSQP",
+        bounds=[(min_weight, 1.0)] * n_assets,
+        constraints=[
+            {
+                "type": "eq",
+                "fun": lambda weights: np.sum(weights) - 1.0,
+            }
+        ],
+        options={"maxiter": 2000, "ftol": 1e-12},
+    )
+
+    if not result.success:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No se encontró una solución: {result.message}",
+        )
+
+    # Clean up numerical errors and normalize.
+    optimal_weights = np.clip(result.x, min_weight, 1.0)
+    optimal_weights /= optimal_weights.sum()
+
+    return optimal_weights
+
 # 3. ENDPOINT: CORRELATION MATRIX
 
 @app.post("/api/correlation")
@@ -171,8 +237,9 @@ def correlation_endpoint(request: PortfolioRequest):
 
 # 4. ENDPOINT: MONTE CARLO SIMULATION
 
+
 @app.post("/api/monte-carlo")
-def monte_carlo_endpoint(request: PortfolioRequest):
+def monte_carlo_endpoint(request: MonteCarloRequest):
     prices = get_historical_data(request.tickers)
     returns = get_returns(prices)
 
@@ -181,8 +248,43 @@ def monte_carlo_endpoint(request: PortfolioRequest):
     n_days = request.days_to_predict
     n_sims = request.simulations
 
-    # Equal-weighted portfolio by default.
-    weights = np.full(n_assets, 1.0 / n_assets)
+    # 1. Obtener y validar los pesos del portafolio.
+    # Si no se proporcionan (None o omitido), se utiliza equiponderación como fallback seguro.
+    if request.weights is None:
+        weights = np.full(n_assets, 1.0 / n_assets, dtype=float)
+    else:
+        if set(request.weights.keys()) != set(tickers):
+            raise HTTPException(
+                status_code=422,
+                detail="Los pesos deben corresponder exactamente a los tickers seleccionados.",
+            )
+
+        try:
+            weights = np.array(
+                [request.weights[ticker] for ticker in tickers],
+                dtype=float,
+            )
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Valores de ponderación no numéricos: {exc}",
+            ) from exc
+
+        if not np.isfinite(weights).all() or (weights < 0).any():
+            raise HTTPException(
+                status_code=422,
+                detail="Los pesos deben ser finitos y no negativos.",
+            )
+
+        weights_sum = float(weights.sum())
+        if not np.isclose(weights_sum, 1.0, atol=1e-4):
+            raise HTTPException(
+                status_code=422,
+                detail=f"La suma de los pesos ({weights_sum:.6f}) debe ser aproximadamente 1.0.",
+            )
+
+        # Normalizar para compensar pequeñas imprecisiones o redondeos de serialización float
+        weights = weights / weights_sum
 
     # Historical daily log-return parameters.
     log_returns = np.log(prices / prices.shift(1)).dropna()
@@ -195,6 +297,7 @@ def monte_carlo_endpoint(request: PortfolioRequest):
     ) / 2
 
     min_eigenvalue = np.linalg.eigvalsh(covariance_daily).min()
+
     if min_eigenvalue < 0:
         covariance_daily += (
             abs(min_eigenvalue) + 1e-12
@@ -210,15 +313,17 @@ def monte_carlo_endpoint(request: PortfolioRequest):
         check_valid="raise",
     )
 
-    # Historical prices at the last available date.
-    last_prices = prices.iloc[-1].to_numpy()
+    # Simulated cumulative log returns for each asset.
+    cumulative_log_returns = np.cumsum(
+        daily_log_returns,
+        axis=1,
+    )
 
-    # Simulated price relatives: current price / last price.
-    cumulative_log_returns = np.cumsum(daily_log_returns, axis=1)
+    # Relative asset prices, starting from 1.0.
     asset_relatives = np.exp(cumulative_log_returns)
 
-    # Initial portfolio value = 1.0 (100%).
-    # Include day 0 so the chart starts at 100%.
+    # Portfolio value paths using the optimized weights.
+    # Shape before concatenate: (n_sims, n_days)
     portfolio_paths = np.concatenate(
         [
             np.ones((n_sims, 1)),
@@ -227,13 +332,17 @@ def monte_carlo_endpoint(request: PortfolioRequest):
         axis=1,
     )
 
-    # Daily simulated portfolio returns.
+    # Final portfolio values and returns.
     terminal_values = portfolio_paths[:, -1]
     terminal_returns = terminal_values - 1.0
 
     # Percentile bands across simulations, for each day.
     percentiles = {
-        str(p): np.percentile(portfolio_paths, p, axis=0).round(6).tolist()
+        str(p): np.percentile(
+            portfolio_paths,
+            p,
+            axis=0,
+        ).round(6).tolist()
         for p in [5, 25, 50, 75, 95]
     }
 
@@ -246,7 +355,7 @@ def monte_carlo_endpoint(request: PortfolioRequest):
         "simulations": n_sims,
         "initial_portfolio_value": 1.0,
         "weights": {
-            ticker: round(float(weight), 6)
+            ticker: round(float(weight), 8)
             for ticker, weight in zip(tickers, weights)
         },
         "trajectories": trajectories,
@@ -272,69 +381,36 @@ def monte_carlo_endpoint(request: PortfolioRequest):
 
 @app.post("/api/optimize")
 def optimize_endpoint(request: OptimizeRequest):
+    # 1. Download historical prices and calculate daily returns.
     prices = get_historical_data(request.tickers)
     returns = get_returns(prices)
 
     tickers = request.tickers
-    n_assets = len(tickers)
 
-    # Arithmetic historical daily returns.
-    mean_daily = returns.mean().to_numpy()
-    covariance_daily = returns.cov().to_numpy()
-
-    # Annualized estimates: approximately 252 trading days.
-    mean_annual = mean_daily * 252
-    covariance_annual = covariance_daily * 252
-
-    rf = request.risk_free_rate
-    initial_weights = np.full(n_assets, 1.0 / n_assets)
-
-    def portfolio_variance(weights):
-        return float(weights @ covariance_annual @ weights)
-
-    def negative_sharpe(weights):
-        expected_return = float(weights @ mean_annual)
-        variance = portfolio_variance(weights)
-        volatility = np.sqrt(max(variance, 0.0))
-
-        if volatility < 1e-12:
-            return 1e6
-
-        return -(expected_return - rf) / volatility
-
-    if request.objective == "min_variance":
-        objective_function = portfolio_variance
-    else:
-        objective_function = negative_sharpe
-
-    min_weight = 0.05
-    result = minimize(
-        objective_function,
-        initial_weights,
-        method="SLSQP",
-        bounds=[(min_weight, 1.0)] * n_assets,
-        constraints=[
-            {
-                "type": "eq",
-                "fun": lambda weights: np.sum(weights) - 1.0,
-            }
-        ],
-        options={"maxiter": 2000, "ftol": 1e-12},
+    # 2. Calculate optimal portfolio weights.
+    optimal_weights = calculate_optimal_weights(
+        returns=returns,
+        objective=request.objective,
+        risk_free_rate=request.risk_free_rate,
     )
 
-    if not result.success:
-        raise HTTPException(
-            status_code=422,
-            detail=f"No se encontró una solución: {result.message}",
-        )
+    # 3. Calculate annualized portfolio metrics.
+    mean_annual = returns.mean().to_numpy() * 252
+    covariance_annual = returns.cov().to_numpy() * 252
 
-    # Remove small numerical errors and normalize.
-    optimal_weights = np.clip(result.x, min_weight, 1.0)
-    optimal_weights /= optimal_weights.sum()
+    rf = request.risk_free_rate
 
-    expected_return = float(optimal_weights @ mean_annual)
-    variance = portfolio_variance(optimal_weights)
-    volatility = float(np.sqrt(max(variance, 0.0)))
+    expected_return = float(
+        optimal_weights @ mean_annual
+    )
+
+    variance = float(
+        optimal_weights @ covariance_annual @ optimal_weights
+    )
+
+    volatility = float(
+        np.sqrt(max(variance, 0.0))
+    )
 
     sharpe = (
         (expected_return - rf) / volatility
@@ -342,6 +418,7 @@ def optimize_endpoint(request: OptimizeRequest):
         else None
     )
 
+    # 4. Return the optimization results.
     return {
         "objective": request.objective,
         "tickers": tickers,
@@ -354,14 +431,18 @@ def optimize_endpoint(request: OptimizeRequest):
             "annual_variance": round(variance, 8),
             "annual_volatility": round(volatility, 8),
             "sharpe_ratio": (
-                round(sharpe, 8) if sharpe is not None else None
+                round(sharpe, 8)
+                if sharpe is not None
+                else None
             ),
             "risk_free_rate": rf,
-            "weights_sum": round(float(optimal_weights.sum()), 8),
+            "weights_sum": round(
+                float(optimal_weights.sum()), 8
+            ),
         },
         "constraints": {
             "long_only": True,
-            "minimum_weight": min_weight,
+            "minimum_weight": 0.05,
             "maximum_weight": 1.0,
             "weights_sum_to_one": True,
         },

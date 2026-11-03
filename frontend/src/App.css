@@ -138,11 +138,24 @@
   background: #1e293b;
 }
 
+.suggestion-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 .ticker-badge {
   font-weight: 700;
   color: #60a5fa;
   font-size: 15px;
   letter-spacing: 0.5px;
+}
+
+.ticker-sector {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 400;
 }
 
 .ticker-action {
@@ -527,3 +540,111 @@
   border-radius: 5px;
   transition: width 0.4s ease;
 }
+
+/* Distribución por Sector */
+.sector-distribution-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 24px;
+}
+
+.sector-distribution-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sector-distribution-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.sector-subtitle {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.sector-progress-bar {
+  display: flex;
+  height: 24px;
+  width: 100%;
+  background: #0f172a;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+  border: 1px solid #334155;
+  margin-bottom: 16px;
+}
+
+.sector-progress-segment {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  position: relative;
+  cursor: pointer;
+}
+
+.sector-progress-segment:hover {
+  filter: brightness(1.15);
+  transform: scaleY(1.05);
+  z-index: 2;
+}
+
+.sector-segment-label {
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.sector-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+
+.sector-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  font-size: 12px;
+}
+
+.sector-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sector-legend-name {
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.sector-legend-pct {
+  color: #38bdf8;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.sector-legend-tickers {
+  color: #64748b;
+  font-size: 11px;
+}
+

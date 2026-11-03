@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import "./App.css";
-import nasdaqData from "./data/NASDAQ.json";
-import nyseData from "./data/NYSE.json";
+import stocksCleanedData from "./data/stocks_cleaned.json";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -25,6 +24,22 @@ ChartJS.register(
 );
 
 const API_BASE = "http://localhost:8000";
+
+const SECTOR_COLORS: Record<string, string> = {
+  Technology: "#3b82f6", // blue
+  "Health Care": "#ec4899", // pink
+  Finance: "#10b981", // emerald
+  "Consumer Discretionary": "#f59e0b", // amber
+  "Consumer Staples": "#84cc16", // lime
+  Industrials: "#8b5cf6", // purple
+  Energy: "#ef4444", // red
+  Utilities: "#06b6d4", // cyan
+  "Real Estate": "#14b8a6", // teal
+  Telecommunications: "#6366f1", // indigo
+  "Basic Materials": "#d97706", // warm amber
+  Miscellaneous: "#64748b", // slate
+  Other: "#94a3b8", // gray
+};
 
 interface CorrelationResponse {
   tickers: string[];
@@ -126,11 +141,59 @@ function App() {
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Consolidated unique list of available tickers
+  // Consolidated unique list of available tickers with sector info
   const allAvailableTickers = useMemo(() => {
-    const list = Array.from(new Set([...nasdaqData, ...nyseData]));
-    return list.sort();
+    const tickerMap = new Map<string, string>();
+    stocksCleanedData.forEach((item: { symbol?: string | null; sector?: string | null }) => {
+      if (item.symbol && typeof item.symbol === "string") {
+        const cleanSymbol = item.symbol.toUpperCase();
+        if (!tickerMap.has(cleanSymbol)) {
+          tickerMap.set(cleanSymbol, item.sector || "");
+        }
+      }
+    });
+
+    return Array.from(tickerMap.entries())
+      .map(([symbol, sector]) => ({ symbol, sector }))
+      .sort((a, b) => a.symbol.localeCompare(b.symbol));
   }, []);
+
+  // Map of symbol -> sector for quick lookup
+  const tickerToSectorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    stocksCleanedData.forEach((item: { symbol?: string | null; sector?: string | null }) => {
+      if (item.symbol && typeof item.symbol === "string") {
+        map.set(item.symbol.toUpperCase(), item.sector?.trim() || "Other");
+      }
+    });
+    return map;
+  }, []);
+
+  // Sector breakdown of optimal portfolio weights
+  const sectorAllocations = useMemo(() => {
+    if (!optData?.weights) return [];
+
+    const sectorTotals: Record<string, { weight: number; tickers: { ticker: string; weight: number }[] }> = {};
+
+    Object.entries(optData.weights).forEach(([ticker, weight]) => {
+      const sector = tickerToSectorMap.get(ticker.toUpperCase()) || "Other";
+      if (!sectorTotals[sector]) {
+        sectorTotals[sector] = { weight: 0, tickers: [] };
+      }
+      sectorTotals[sector].weight += weight;
+      sectorTotals[sector].tickers.push({ ticker, weight });
+    });
+
+    return Object.entries(sectorTotals)
+      .map(([sector, data]) => ({
+        sector,
+        weight: data.weight,
+        percentage: data.weight * 100,
+        color: SECTOR_COLORS[sector] || "#94a3b8",
+        tickers: data.tickers.sort((a, b) => b.weight - a.weight),
+      }))
+      .sort((a, b) => b.percentage - a.percentage);
+  }, [optData?.weights, tickerToSectorMap]);
 
   // Search suggestions when at least 2 characters are entered
   const suggestions = useMemo(() => {
@@ -138,13 +201,13 @@ function App() {
     if (trimmed.length < 2) return [];
 
     const startsWith = allAvailableTickers.filter(
-      (t) => t.startsWith(trimmed) && !selectedTickers.includes(t),
+      (item) => item.symbol.startsWith(trimmed) && !selectedTickers.includes(item.symbol),
     );
     const contains = allAvailableTickers.filter(
-      (t) =>
-        !t.startsWith(trimmed) &&
-        t.includes(trimmed) &&
-        !selectedTickers.includes(t),
+      (item) =>
+        !item.symbol.startsWith(trimmed) &&
+        item.symbol.includes(trimmed) &&
+        !selectedTickers.includes(item.symbol),
     );
 
     return [...startsWith, ...contains].slice(0, 7);
@@ -430,13 +493,18 @@ function App() {
             {/* Dropdown with up to 7 suggestions */}
             {isDropdownOpen && suggestions.length > 0 && (
               <ul className="suggestions-dropdown">
-                {suggestions.map((ticker) => (
+                {suggestions.map((item) => (
                   <li
-                    key={ticker}
-                    onClick={() => addTicker(ticker)}
+                    key={item.symbol}
+                    onClick={() => addTicker(item.symbol)}
                     className="suggestion-item"
                   >
-                    <span className="ticker-badge">{ticker}</span>
+                    <div className="suggestion-info">
+                      <span className="ticker-badge">{item.symbol}</span>
+                      {item.sector && (
+                        <span className="ticker-sector">{item.sector}</span>
+                      )}
+                    </div>
                     <span className="ticker-action">+ Add to portfolio</span>
                   </li>
                 ))}
@@ -745,6 +813,55 @@ function App() {
                 <span className="metric-num">
                   {(optData.metrics.weights_sum * 100).toFixed(1)}%
                 </span>
+              </div>
+            </div>
+          )}
+
+          {optData?.weights && sectorAllocations.length > 0 && (
+            <div className="sector-distribution-card">
+              <div className="sector-distribution-header">
+                <h3>Sector Weight Distribution</h3>
+                <span className="sector-subtitle">Proportional breakdown of optimal portfolio allocation</span>
+              </div>
+
+              {/* Multi-color stacked proportional bar */}
+              <div className="sector-progress-bar">
+                {sectorAllocations.map((item) => (
+                  <div
+                    key={item.sector}
+                    className="sector-progress-segment"
+                    style={{
+                      width: `${item.percentage}%`,
+                      backgroundColor: item.color,
+                    }}
+                    title={`${item.sector}: ${item.percentage.toFixed(2)}% (${item.tickers.map((t) => t.ticker).join(", ")})`}
+                  >
+                    {item.percentage >= 7 && (
+                      <span className="sector-segment-label">
+                        {item.percentage.toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Sector legend with tags and percentages */}
+              <div className="sector-legend">
+                {sectorAllocations.map((item) => (
+                  <div key={item.sector} className="sector-legend-item">
+                    <span
+                      className="sector-legend-dot"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="sector-legend-name">{item.sector}</span>
+                    <span className="sector-legend-pct">
+                      {item.percentage.toFixed(2)}%
+                    </span>
+                    <span className="sector-legend-tickers">
+                      ({item.tickers.map((t) => t.ticker).join(", ")})
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}

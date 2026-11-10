@@ -2,26 +2,17 @@ import { useState, useMemo, useEffect } from "react";
 import "./App.css";
 import stocksCleanedData from "./data/stocks_cleaned.json";
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-} from "chart.js";
-import { Line } from "react-chartjs-2";
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-);
+  MonteCarloVisual,
+  CorrelationMatrixVisual,
+  PortfolioOptimizationVisual,
+  type MonteCarloResponse,
+  type CorrelationResponse,
+  type OptimizeResponse,
+  type PortfolioRequestPayload,
+  type OptimizeRequestPayload,
+  type MonteCarloRequestPayload,
+  type SectorAllocation,
+} from "./assets";
 
 const API_BASE = "http://localhost:8000";
 
@@ -40,69 +31,6 @@ const SECTOR_COLORS: Record<string, string> = {
   Miscellaneous: "#64748b", // slate
   Other: "#94a3b8", // gray
 };
-
-interface CorrelationResponse {
-  tickers: string[];
-  observations: number;
-  method: string;
-  correlation_matrix: Record<string, Record<string, number>>;
-}
-
-interface MonteCarloResponse {
-  tickers: string[];
-  days: number[];
-  simulations: number;
-  initial_portfolio_value: number;
-  weights: Record<string, number>;
-  trajectories: number[][];
-  percentile_bands: Record<string, number[]>;
-  statistics: {
-    mean_terminal_value: number;
-    median_terminal_value: number;
-    probability_of_loss: number;
-    percentile_5_terminal_value: number;
-    percentile_95_terminal_value: number;
-  };
-}
-
-interface OptimizeResponse {
-  objective: "min_variance" | "max_sharpe";
-  tickers: string[];
-  weights: Record<string, number>;
-  metrics: {
-    expected_annual_return: number;
-    annual_variance: number;
-    annual_volatility: number;
-    sharpe_ratio: number | null;
-    risk_free_rate: number;
-    weights_sum: number;
-  };
-  constraints: {
-    long_only: boolean;
-    minimum_weight: number;
-    maximum_weight: number;
-    weights_sum_to_one: boolean;
-  };
-}
-
-interface PortfolioRequestPayload {
-  tickers: string[];
-  days_to_predict: number;
-  simulations: number;
-}
-
-interface OptimizeRequestPayload {
-  tickers: string[];
-  objective: "min_variance" | "max_sharpe";
-  risk_free_rate: number;
-}
-
-interface MonteCarloRequestPayload {
-  tickers: string[];
-  days_to_predict: number;
-  simulations: number;
-  weights: Record<string, number>;
-}
 
 const DEFAULT_TICKERS = [
   "TSLA",
@@ -130,9 +58,8 @@ function App() {
     "min_variance",
   );
   const [riskFreeRate, setRiskFreeRate] = useState<number>(0.04);
-  const [maxDisplayPaths, setMaxDisplayPaths] = useState<number>(40);
 
-  // Data states
+  // Data states populated from the backend API
   const [mcData, setMcData] = useState<MonteCarloResponse | null>(null);
   const [corrData, setCorrData] = useState<CorrelationResponse | null>(null);
   const [optData, setOptData] = useState<OptimizeResponse | null>(null);
@@ -144,14 +71,16 @@ function App() {
   // Consolidated unique list of available tickers with sector info
   const allAvailableTickers = useMemo(() => {
     const tickerMap = new Map<string, string>();
-    stocksCleanedData.forEach((item: { symbol?: string | null; sector?: string | null }) => {
-      if (item.symbol && typeof item.symbol === "string") {
-        const cleanSymbol = item.symbol.toUpperCase();
-        if (!tickerMap.has(cleanSymbol)) {
-          tickerMap.set(cleanSymbol, item.sector || "");
+    stocksCleanedData.forEach(
+      (item: { symbol?: string | null; sector?: string | null }) => {
+        if (item.symbol && typeof item.symbol === "string") {
+          const cleanSymbol = item.symbol.toUpperCase();
+          if (!tickerMap.has(cleanSymbol)) {
+            tickerMap.set(cleanSymbol, item.sector ?? "");
+          }
         }
-      }
-    });
+      },
+    );
 
     return Array.from(tickerMap.entries())
       .map(([symbol, sector]) => ({ symbol, sector }))
@@ -161,19 +90,24 @@ function App() {
   // Map of symbol -> sector for quick lookup
   const tickerToSectorMap = useMemo(() => {
     const map = new Map<string, string>();
-    stocksCleanedData.forEach((item: { symbol?: string | null; sector?: string | null }) => {
-      if (item.symbol && typeof item.symbol === "string") {
-        map.set(item.symbol.toUpperCase(), item.sector?.trim() || "Other");
-      }
-    });
+    stocksCleanedData.forEach(
+      (item: { symbol?: string | null; sector?: string | null }) => {
+        if (item.symbol && typeof item.symbol === "string") {
+          map.set(item.symbol.toUpperCase(), item.sector?.trim() || "Other");
+        }
+      },
+    );
     return map;
   }, []);
 
   // Sector breakdown of optimal portfolio weights
-  const sectorAllocations = useMemo(() => {
+  const sectorAllocations = useMemo<SectorAllocation[]>(() => {
     if (!optData?.weights) return [];
 
-    const sectorTotals: Record<string, { weight: number; tickers: { ticker: string; weight: number }[] }> = {};
+    const sectorTotals: Record<
+      string,
+      { weight: number; tickers: { ticker: string; weight: number }[] }
+    > = {};
 
     Object.entries(optData.weights).forEach(([ticker, weight]) => {
       const sector = tickerToSectorMap.get(ticker.toUpperCase()) || "Other";
@@ -201,7 +135,8 @@ function App() {
     if (trimmed.length < 2) return [];
 
     const startsWith = allAvailableTickers.filter(
-      (item) => item.symbol.startsWith(trimmed) && !selectedTickers.includes(item.symbol),
+      (item) =>
+        item.symbol.startsWith(trimmed) && !selectedTickers.includes(item.symbol),
     );
     const contains = allAvailableTickers.filter(
       (item) =>
@@ -278,13 +213,17 @@ function App() {
       ]);
 
       if (!corrRes.ok) {
-        const err = (await corrRes.json().catch(() => ({}))) as { detail?: string };
+        const err = (await corrRes.json().catch(() => ({}))) as {
+          detail?: string;
+        };
         throw new Error(
           `Correlation Error: ${err.detail ?? corrRes.statusText}`,
         );
       }
       if (!optRes.ok) {
-        const err = (await optRes.json().catch(() => ({}))) as { detail?: string };
+        const err = (await optRes.json().catch(() => ({}))) as {
+          detail?: string;
+        };
         throw new Error(
           `Optimization Error: ${err.detail ?? optRes.statusText}`,
         );
@@ -308,7 +247,9 @@ function App() {
       });
 
       if (!mcRes.ok) {
-        const err = (await mcRes.json().catch(() => ({}))) as { detail?: string };
+        const err = (await mcRes.json().catch(() => ({}))) as {
+          detail?: string;
+        };
         throw new Error(`Monte Carlo Error: ${err.detail ?? mcRes.statusText}`);
       }
 
@@ -333,114 +274,6 @@ function App() {
     executeAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Chart.js data configuration for Monte Carlo
-  const chartData = useMemo(() => {
-    if (!mcData) return null;
-
-    const labels = mcData.days.map((d) => `Day ${d}`);
-    const datasets: any[] = [];
-
-    // Individual sample trajectories
-    const sampledTrajectories = mcData.trajectories.slice(0, maxDisplayPaths);
-    sampledTrajectories.forEach((traj, idx) => {
-      datasets.push({
-        label: `Path ${idx + 1}`,
-        data: traj,
-        borderColor: "rgba(99, 102, 241, 0.18)",
-        borderWidth: 1,
-        pointRadius: 0,
-        fill: false,
-        tension: 0.1,
-      });
-    });
-
-    // Key percentile bands
-    if (mcData.percentile_bands) {
-      if (mcData.percentile_bands["95"]) {
-        datasets.push({
-          label: "95th Percentile",
-          data: mcData.percentile_bands["95"],
-          borderColor: "#10b981",
-          borderWidth: 2.5,
-          borderDash: [5, 5],
-          pointRadius: 0,
-          fill: false,
-        });
-      }
-      if (mcData.percentile_bands["50"]) {
-        datasets.push({
-          label: "Median (P50)",
-          data: mcData.percentile_bands["50"],
-          borderColor: "#3b82f6",
-          borderWidth: 3,
-          pointRadius: 0,
-          fill: false,
-        });
-      }
-      if (mcData.percentile_bands["5"]) {
-        datasets.push({
-          label: "5th Percentile",
-          data: mcData.percentile_bands["5"],
-          borderColor: "#ef4444",
-          borderWidth: 2.5,
-          borderDash: [5, 5],
-          pointRadius: 0,
-          fill: false,
-        });
-      }
-    }
-
-    return { labels, datasets };
-  }, [mcData, maxDisplayPaths]);
-
-  const chartOptions: any = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-    plugins: {
-      legend: {
-        position: "top" as const,
-        labels: {
-          filter: (item: any) =>
-            item.text.includes("Percentile") || item.text.includes("Median"),
-          color: "#e2e8f0",
-          font: { weight: "600" },
-        },
-      },
-      tooltip: {
-        mode: "index",
-        intersect: false,
-      },
-    },
-    scales: {
-      x: {
-        grid: { color: "rgba(255, 255, 255, 0.05)" },
-        ticks: { color: "#94a3b8", maxTicksLimit: 12 },
-      },
-      y: {
-        grid: { color: "rgba(255, 255, 255, 0.05)" },
-        ticks: {
-          color: "#94a3b8",
-          callback: (value: any) => `${(Number(value) * 100).toFixed(0)}%`,
-        },
-        title: {
-          display: true,
-          text: "Relative Portfolio Value (Base 100%)",
-          color: "#94a3b8",
-        },
-      },
-    },
-  };
-
-  const getHeatmapColor = (val: number) => {
-    if (val >= 1) return "rgba(59, 130, 246, 0.9)";
-    if (val >= 0.7) return "rgba(16, 185, 129, 0.75)";
-    if (val >= 0.4) return "rgba(52, 211, 153, 0.45)";
-    if (val >= 0.1) return "rgba(251, 191, 36, 0.35)";
-    if (val >= -0.1) return "rgba(148, 163, 184, 0.25)";
-    return "rgba(239, 68, 68, 0.55)";
-  };
 
   return (
     <div className="portfolio-app">
@@ -577,7 +410,9 @@ function App() {
               <label>Optimization Objective:</label>
               <select
                 value={objective}
-                onChange={(e) => setObjective(e.target.value as any)}
+                onChange={(e) =>
+                  setObjective(e.target.value as "min_variance" | "max_sharpe")
+                }
               >
                 <option value="min_variance">
                   Minimum Variance (Min Risk)
@@ -628,291 +463,18 @@ function App() {
           {errorMsg && <div className="error-banner">❌ {errorMsg}</div>}
         </section>
 
-        {/* Section 2: Monte Carlo Simulation Chart */}
-        <section className="dashboard-section">
-          <div className="section-header">
-            <h2>2. Monte Carlo Simulation (Paths & Percentiles)</h2>
-            <div className="display-options">
-              <label>Displayed paths:</label>
-              <select
-                value={maxDisplayPaths}
-                onChange={(e) => setMaxDisplayPaths(Number(e.target.value))}
-              >
-                <option value={20}>20 paths</option>
-                <option value={40}>40 paths</option>
-                <option value={80}>80 paths</option>
-                <option value={150}>150 paths</option>
-              </select>
-            </div>
-          </div>
+        {/* Section 2: Monte Carlo Simulation Visual Component */}
+        <MonteCarloVisual data={mcData} loading={loading} />
 
-          {mcData?.statistics && (
-            <div className="stats-cards-grid">
-              <div className="stat-card">
-                <span className="stat-label">
-                  Expected Terminal Value (Mean)
-                </span>
-                <span className="stat-value">
-                  {(mcData.statistics.mean_terminal_value * 100).toFixed(2)}%
-                </span>
-                <span className="stat-sub">
-                  Return:{" "}
-                  {((mcData.statistics.mean_terminal_value - 1) * 100).toFixed(
-                    2,
-                  )}
-                  %
-                </span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">Terminal Median</span>
-                <span className="stat-value">
-                  {(mcData.statistics.median_terminal_value * 100).toFixed(2)}%
-                </span>
-                <span className="stat-sub">50th Percentile</span>
-              </div>
-              <div className="stat-card warning">
-                <span className="stat-label">Probability of Loss</span>
-                <span className="stat-value">
-                  {(mcData.statistics.probability_of_loss * 100).toFixed(2)}%
-                </span>
-                <span className="stat-sub">P(Return &lt; 0)</span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">5th Percentile (95% VaR)</span>
-                <span className="stat-value">
-                  {(
-                    mcData.statistics.percentile_5_terminal_value * 100
-                  ).toFixed(2)}
-                  %
-                </span>
-                <span className="stat-sub">Adverse scenario</span>
-              </div>
-              <div className="stat-card success">
-                <span className="stat-label">95th Percentile</span>
-                <span className="stat-value">
-                  {(
-                    mcData.statistics.percentile_95_terminal_value * 100
-                  ).toFixed(2)}
-                  %
-                </span>
-                <span className="stat-sub">Optimistic scenario</span>
-              </div>
-            </div>
-          )}
+        {/* Section 3: Daily Returns Correlation Matrix Visual Component */}
+        <CorrelationMatrixVisual data={corrData} loading={loading} />
 
-          <div className="chart-container">
-            {chartData ? (
-              <Line data={chartData} options={chartOptions} />
-            ) : (
-              <div className="chart-placeholder">
-                {loading
-                  ? "Generating stochastic simulations..."
-                  : "Run simulation to view paths"}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Section 3: Correlation Matrix */}
-        <section className="dashboard-section">
-          <h2>3. Daily Returns Correlation Matrix (Pearson)</h2>
-          <p className="instruction">
-            Observations analyzed: {corrData?.observations ?? 0} common
-            historical trading dates.
-          </p>
-
-          {corrData?.correlation_matrix ? (
-            <div className="matrix-table-wrapper">
-              <table className="correlation-table">
-                <thead>
-                  <tr>
-                    <th className="sticky-col">Asset</th>
-                    {corrData.tickers.map((ticker) => (
-                      <th key={ticker}>{ticker}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {corrData.tickers.map((rowTicker) => (
-                    <tr key={rowTicker}>
-                      <td className="sticky-col ticker-row-header">
-                        {rowTicker}
-                      </td>
-                      {corrData.tickers.map((colTicker) => {
-                        const val =
-                          corrData.correlation_matrix[rowTicker]?.[colTicker] ??
-                          0;
-                        return (
-                          <td
-                            key={colTicker}
-                            style={{ backgroundColor: getHeatmapColor(val) }}
-                            className="corr-cell"
-                            title={`Correlation between ${rowTicker} and ${colTicker}: ${val.toFixed(4)}`}
-                          >
-                            {val.toFixed(2)}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="table-placeholder">
-              {loading
-                ? "Downloading historical prices and estimating correlations..."
-                : "No correlation data available"}
-            </div>
-          )}
-        </section>
-
-        {/* Section 4: Portfolio Optimization Table */}
-        <section className="dashboard-section">
-          <h2>4. Portfolio Optimization (Markowitz SLSQP)</h2>
-          <p className="instruction">
-            Objective:{" "}
-            <strong>
-              {optData?.objective === "max_sharpe"
-                ? "Maximum Sharpe Ratio (Highest risk-adjusted return)"
-                : "Minimum Variance (Lowest portfolio volatility)"}
-            </strong>{" "}
-            | Minimum asset allocation weight: 5.0%
-          </p>
-
-          {optData?.metrics && (
-            <div className="metrics-banner">
-              <div className="metric-item">
-                <span className="metric-label">Expected Annual Return:</span>
-                <span className="metric-num">
-                  {(optData.metrics.expected_annual_return * 100).toFixed(2)}%
-                </span>
-              </div>
-              <div className="metric-item">
-                <span className="metric-label">Annual Volatility (σ):</span>
-                <span className="metric-num">
-                  {(optData.metrics.annual_volatility * 100).toFixed(2)}%
-                </span>
-              </div>
-              <div className="metric-item">
-                <span className="metric-label">Sharpe Ratio:</span>
-                <span className="metric-num">
-                  {optData.metrics.sharpe_ratio !== null
-                    ? optData.metrics.sharpe_ratio.toFixed(3)
-                    : "N/A"}
-                </span>
-              </div>
-              <div className="metric-item">
-                <span className="metric-label">Annual Variance (σ²):</span>
-                <span className="metric-num">
-                  {optData.metrics.annual_variance.toFixed(4)}
-                </span>
-              </div>
-              <div className="metric-item">
-                <span className="metric-label">Total Weights Sum:</span>
-                <span className="metric-num">
-                  {(optData.metrics.weights_sum * 100).toFixed(1)}%
-                </span>
-              </div>
-            </div>
-          )}
-
-          {optData?.weights && sectorAllocations.length > 0 && (
-            <div className="sector-distribution-card">
-              <div className="sector-distribution-header">
-                <h3>Sector Weight Distribution</h3>
-                <span className="sector-subtitle">Proportional breakdown of optimal portfolio allocation</span>
-              </div>
-
-              {/* Multi-color stacked proportional bar */}
-              <div className="sector-progress-bar">
-                {sectorAllocations.map((item) => (
-                  <div
-                    key={item.sector}
-                    className="sector-progress-segment"
-                    style={{
-                      width: `${item.percentage}%`,
-                      backgroundColor: item.color,
-                    }}
-                    title={`${item.sector}: ${item.percentage.toFixed(2)}% (${item.tickers.map((t) => t.ticker).join(", ")})`}
-                  >
-                    {item.percentage >= 7 && (
-                      <span className="sector-segment-label">
-                        {item.percentage.toFixed(1)}%
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* Sector legend with tags and percentages */}
-              <div className="sector-legend">
-                {sectorAllocations.map((item) => (
-                  <div key={item.sector} className="sector-legend-item">
-                    <span
-                      className="sector-legend-dot"
-                      style={{ backgroundColor: item.color }}
-                    />
-                    <span className="sector-legend-name">{item.sector}</span>
-                    <span className="sector-legend-pct">
-                      {item.percentage.toFixed(2)}%
-                    </span>
-                    <span className="sector-legend-tickers">
-                      ({item.tickers.map((t) => t.ticker).join(", ")})
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {optData?.weights ? (
-            <div className="optimization-table-wrapper">
-              <table className="optimization-table">
-                <thead>
-                  <tr>
-                    <th>Ticker</th>
-                    <th>Optimal Weight (%)</th>
-                    <th>Numerical Weight</th>
-                    <th>Visual Allocation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(optData.weights)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([ticker, weight]) => {
-                      const pct = weight * 100;
-                      return (
-                        <tr key={ticker}>
-                          <td className="opt-ticker-cell">
-                            <strong>{ticker}</strong>
-                          </td>
-                          <td className="opt-pct-cell">{pct.toFixed(2)}%</td>
-                          <td className="opt-val-cell">{weight.toFixed(6)}</td>
-                          <td className="opt-bar-cell">
-                            <div className="bar-track">
-                              <div
-                                className="bar-fill"
-                                style={{
-                                  width: `${Math.min(100, Math.max(5, pct))}%`,
-                                }}
-                              />
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="table-placeholder">
-              {loading
-                ? "Solving efficient frontier..."
-                : "No optimization data available"}
-            </div>
-          )}
-        </section>
+        {/* Section 4: Portfolio Optimization Visual Component */}
+        <PortfolioOptimizationVisual
+          data={optData}
+          sectorAllocations={sectorAllocations}
+          loading={loading}
+        />
       </main>
     </div>
   );

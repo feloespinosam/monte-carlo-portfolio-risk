@@ -458,3 +458,9 @@ def root():
             "/api/optimize",
         ],
     }
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok"
+    }

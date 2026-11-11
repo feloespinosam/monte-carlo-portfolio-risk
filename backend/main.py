@@ -20,30 +20,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class PortfolioRequest(BaseModel):
+class AnalysisRequest(BaseModel):
     tickers: list[str] = Field(
         default=["TSLA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "NFLX", "AMD", "INTC"], min_length=10, max_length=10
     )
     days_to_predict: int = Field(default=252, ge=5, le=504)
     simulations: int = Field(default=1000, ge=100, le=5000)
-
-    @field_validator("tickers")
-    @classmethod
-    def validate_tickers(cls, tickers):
-        cleaned = [ticker.strip().upper() for ticker in tickers]
-
-        if any(not ticker for ticker in cleaned):
-            raise ValueError("Los tickers no pueden estar vacíos.")
-
-        if len(set(cleaned)) != 10:
-            raise ValueError("Debes enviar 10 tickers diferentes.")
-
-        return cleaned
-
-class OptimizeRequest(BaseModel):
-    tickers: list[str] = Field(
-        ..., min_length=10, max_length=10
-    )
     objective: Literal["min_variance", "max_sharpe"] = "min_variance"
     risk_free_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 
@@ -59,9 +41,6 @@ class OptimizeRequest(BaseModel):
             raise ValueError("Debes enviar 10 tickers diferentes.")
 
         return cleaned
-
-class MonteCarloRequest(PortfolioRequest):
-    weights: dict[str, float] | None = None
 
 def get_historical_data(tickers: list[str]) -> pd.DataFrame:
     """Download adjusted historical prices for all assets."""
@@ -142,19 +121,6 @@ def get_correlation(returns: pd.DataFrame) -> pd.DataFrame:
 
     return corr
 
-def get_covariance(returns: pd.DataFrame) -> pd.DataFrame:
-    """Annualization is not applied here: covariance is daily."""
-
-    covariance = returns.cov()
-
-    if not np.isfinite(covariance.to_numpy()).all():
-        raise HTTPException(
-            status_code=422,
-            detail="No se pudo calcular la matriz de covarianza.",
-        )
-
-    return covariance
-
 def calculate_optimal_weights(
     returns: pd.DataFrame,
     objective: Literal["min_variance", "max_sharpe"],
@@ -218,73 +184,62 @@ def calculate_optimal_weights(
 
     return optimal_weights
 
-# 3. ENDPOINT: CORRELATION MATRIX
-
-@app.post("/api/correlation")
-def correlation_endpoint(request: PortfolioRequest):
-    prices = get_historical_data(request.tickers)
-    returns = get_returns(prices)
-    corr = get_correlation(returns)
+def build_correlation_matrix_payload(
+    tickers: list[str],
+    corr: pd.DataFrame,
+) -> dict[str, dict[str, float]]:
+    """Serialize the Pearson correlation matrix by ticker pair."""
 
     return {
-        "tickers": request.tickers,
-        "observations": len(returns),
-        "method": "Pearson correlation of daily simple returns",
-        "correlation_matrix": {
-            ticker: {other: round(float(corr.loc[ticker, other]), 6) for other in request.tickers} for ticker in request.tickers
-        },
+        ticker: {
+            other: round(float(corr.loc[ticker, other]), 6)
+            for other in tickers
+        }
+        for ticker in tickers
     }
 
-# 4. ENDPOINT: MONTE CARLO SIMULATION
+def compute_portfolio_metrics(
+    weights: np.ndarray,
+    returns: pd.DataFrame,
+    risk_free_rate: float,
+) -> dict:
+    """Annualized return, variance, volatility and Sharpe for a weight vector."""
 
+    mean_annual = returns.mean().to_numpy() * 252
+    covariance_annual = returns.cov().to_numpy() * 252
 
-@app.post("/api/monte-carlo")
-def monte_carlo_endpoint(request: MonteCarloRequest):
-    prices = get_historical_data(request.tickers)
-    returns = get_returns(prices)
+    expected_return = float(weights @ mean_annual)
+    variance = float(weights @ covariance_annual @ weights)
+    volatility = float(np.sqrt(max(variance, 0.0)))
 
-    tickers = request.tickers
-    n_assets = len(tickers)
-    n_days = request.days_to_predict
-    n_sims = request.simulations
+    sharpe = (
+        (expected_return - risk_free_rate) / volatility
+        if volatility > 1e-12
+        else None
+    )
 
-    # 1. Obtener y validar los pesos del portafolio.
-    # Si no se proporcionan (None o omitido), se utiliza equiponderación como fallback seguro.
-    if request.weights is None:
-        weights = np.full(n_assets, 1.0 / n_assets, dtype=float)
-    else:
-        if set(request.weights.keys()) != set(tickers):
-            raise HTTPException(
-                status_code=422,
-                detail="Los pesos deben corresponder exactamente a los tickers seleccionados.",
-            )
+    return {
+        "expected_annual_return": round(expected_return, 8),
+        "annual_variance": round(variance, 8),
+        "annual_volatility": round(volatility, 8),
+        "sharpe_ratio": (
+            round(sharpe, 8)
+            if sharpe is not None
+            else None
+        ),
+        "risk_free_rate": risk_free_rate,
+        "weights_sum": round(float(weights.sum()), 8),
+    }
 
-        try:
-            weights = np.array(
-                [request.weights[ticker] for ticker in tickers],
-                dtype=float,
-            )
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Valores de ponderación no numéricos: {exc}",
-            ) from exc
+def simulate_portfolio(
+    prices: pd.DataFrame,
+    weights: np.ndarray,
+    n_days: int,
+    n_sims: int,
+) -> dict:
+    """Run the Monte Carlo simulation for a given weight vector."""
 
-        if not np.isfinite(weights).all() or (weights < 0).any():
-            raise HTTPException(
-                status_code=422,
-                detail="Los pesos deben ser finitos y no negativos.",
-            )
-
-        weights_sum = float(weights.sum())
-        if not np.isclose(weights_sum, 1.0, atol=1e-4):
-            raise HTTPException(
-                status_code=422,
-                detail=f"La suma de los pesos ({weights_sum:.6f}) debe ser aproximadamente 1.0.",
-            )
-
-        # Normalizar para compensar pequeñas imprecisiones o redondeos de serialización float
-        weights = weights / weights_sum
+    n_assets = prices.shape[1]
 
     # Historical daily log-return parameters.
     log_returns = np.log(prices / prices.shift(1)).dropna()
@@ -350,14 +305,9 @@ def monte_carlo_endpoint(request: MonteCarloRequest):
     trajectories = portfolio_paths.round(6).tolist()
 
     return {
-        "tickers": tickers,
         "days": list(range(n_days + 1)),
         "simulations": n_sims,
         "initial_portfolio_value": 1.0,
-        "weights": {
-            ticker: round(float(weight), 8)
-            for ticker, weight in zip(tickers, weights)
-        },
         "trajectories": trajectories,
         "percentile_bands": percentiles,
         "statistics": {
@@ -379,72 +329,72 @@ def monte_carlo_endpoint(request: MonteCarloRequest):
         },
     }
 
-@app.post("/api/optimize")
-def optimize_endpoint(request: OptimizeRequest):
-    # 1. Download historical prices and calculate daily returns.
+# ENDPOINT: FULL ANALYSIS (correlation + optimization + Monte Carlo)
+
+@app.post("/api/analyze")
+def analyze_endpoint(request: AnalysisRequest):
+    """Una sola descarga de precios alimenta los tres cálculos."""
+
+    # 1. Download prices once and derive daily returns.
     prices = get_historical_data(request.tickers)
     returns = get_returns(prices)
+    corr = get_correlation(returns)
 
-    tickers = request.tickers
-
-    # 2. Calculate optimal portfolio weights.
+    # 2. Optimal weights are always calculated server-side.
     optimal_weights = calculate_optimal_weights(
         returns=returns,
         objective=request.objective,
         risk_free_rate=request.risk_free_rate,
     )
 
-    # 3. Calculate annualized portfolio metrics.
-    mean_annual = returns.mean().to_numpy() * 252
-    covariance_annual = returns.cov().to_numpy() * 252
+    # Same rounded weights source for optimization and Monte Carlo.
+    weights_payload = {
+        ticker: round(float(weight), 8)
+        for ticker, weight in zip(request.tickers, optimal_weights)
+    }
 
-    rf = request.risk_free_rate
-
-    expected_return = float(
-        optimal_weights @ mean_annual
+    # 3. Annualized portfolio metrics.
+    metrics = compute_portfolio_metrics(
+        weights=optimal_weights,
+        returns=returns,
+        risk_free_rate=request.risk_free_rate,
     )
 
-    variance = float(
-        optimal_weights @ covariance_annual @ optimal_weights
+    # 4. Monte Carlo uses the unrounded optimal weight array.
+    simulation = simulate_portfolio(
+        prices=prices,
+        weights=optimal_weights,
+        n_days=request.days_to_predict,
+        n_sims=request.simulations,
     )
 
-    volatility = float(
-        np.sqrt(max(variance, 0.0))
-    )
-
-    sharpe = (
-        (expected_return - rf) / volatility
-        if volatility > 1e-12
-        else None
-    )
-
-    # 4. Return the optimization results.
     return {
-        "objective": request.objective,
-        "tickers": tickers,
-        "weights": {
-            ticker: round(float(weight), 8)
-            for ticker, weight in zip(tickers, optimal_weights)
-        },
-        "metrics": {
-            "expected_annual_return": round(expected_return, 8),
-            "annual_variance": round(variance, 8),
-            "annual_volatility": round(volatility, 8),
-            "sharpe_ratio": (
-                round(sharpe, 8)
-                if sharpe is not None
-                else None
-            ),
-            "risk_free_rate": rf,
-            "weights_sum": round(
-                float(optimal_weights.sum()), 8
+        "tickers": request.tickers,
+        "correlation": {
+            "tickers": request.tickers,
+            "observations": len(returns),
+            "method": "Pearson correlation of daily simple returns",
+            "correlation_matrix": build_correlation_matrix_payload(
+                request.tickers,
+                corr,
             ),
         },
-        "constraints": {
-            "long_only": True,
-            "minimum_weight": 0.05,
-            "maximum_weight": 1.0,
-            "weights_sum_to_one": True,
+        "optimization": {
+            "objective": request.objective,
+            "tickers": request.tickers,
+            "weights": weights_payload,
+            "metrics": metrics,
+            "constraints": {
+                "long_only": True,
+                "minimum_weight": 0.05,
+                "maximum_weight": 1.0,
+                "weights_sum_to_one": True,
+            },
+        },
+        "monte_carlo": {
+            "tickers": request.tickers,
+            "weights": weights_payload,
+            **simulation,
         },
     }
 
@@ -453,9 +403,7 @@ def root():
     return {
         "message": "Portfolio Monte Carlo API is running",
         "endpoints": [
-            "/api/correlation",
-            "/api/monte-carlo",
-            "/api/optimize",
+            "/api/analyze",
         ],
     }
 

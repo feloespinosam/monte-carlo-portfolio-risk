@@ -8,9 +8,9 @@ import {
   type MonteCarloResponse,
   type CorrelationResponse,
   type OptimizeResponse,
-  type PortfolioRequestPayload,
-  type OptimizeRequestPayload,
-  type MonteCarloRequestPayload,
+  type AnalysisRequestPayload,
+  type AnalysisResponse,
+  type OptimizationObjective,
   type SectorAllocation,
 } from "./assets";
 
@@ -45,6 +45,42 @@ const DEFAULT_TICKERS = [
   "INTC",
 ];
 
+const getErrorDetail = (payload: unknown): string | null => {
+  if (!payload || typeof payload !== "object" || !("detail" in payload)) {
+    return null;
+  }
+
+  const detail = (payload as { detail: unknown }).detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (
+          item &&
+          typeof item === "object" &&
+          "msg" in item &&
+          typeof (item as { msg: unknown }).msg === "string"
+        ) {
+          return (item as { msg: string }).msg;
+        }
+        return JSON.stringify(item);
+      })
+      .join("; ");
+  }
+
+  return null;
+};
+
+const parseApiError = async (response: Response): Promise<string> => {
+  const body: unknown = await response.json().catch(() => null);
+  const fallback = response.statusText || `HTTP ${response.status}`;
+  return getErrorDetail(body) ?? fallback;
+};
+
 function App() {
   const [selectedTickers, setSelectedTickers] =
     useState<string[]>(DEFAULT_TICKERS);
@@ -54,7 +90,7 @@ function App() {
   // Simulation and optimization parameters
   const [daysToPredict, setDaysToPredict] = useState<number>(252);
   const [simulations, setSimulations] = useState<number>(500);
-  const [objective, setObjective] = useState<"min_variance" | "max_sharpe">(
+  const [objective, setObjective] = useState<OptimizationObjective>(
     "min_variance",
   );
   const [riskFreeRate, setRiskFreeRate] = useState<number>(0.04);
@@ -185,84 +221,35 @@ function App() {
     setLoading(true);
     setErrorMsg(null);
 
-    const portfolioPayload: PortfolioRequestPayload = {
+    const payload: AnalysisRequestPayload = {
       tickers: selectedTickers,
       days_to_predict: Number(daysToPredict),
       simulations: Number(simulations),
-    };
-
-    const optimizePayload: OptimizeRequestPayload = {
-      tickers: selectedTickers,
-      objective: objective,
+      objective,
       risk_free_rate: Number(riskFreeRate),
     };
 
     try {
-      // 1. Ejecutar optimización y correlación en paralelo
-      const [corrRes, optRes] = await Promise.all([
-        fetch(`${API_BASE}/api/correlation`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(portfolioPayload),
-        }),
-        fetch(`${API_BASE}/api/optimize`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(optimizePayload),
-        }),
-      ]);
-
-      if (!corrRes.ok) {
-        const err = (await corrRes.json().catch(() => ({}))) as {
-          detail?: string;
-        };
-        throw new Error(
-          `Correlation Error: ${err.detail ?? corrRes.statusText}`,
-        );
-      }
-      if (!optRes.ok) {
-        const err = (await optRes.json().catch(() => ({}))) as {
-          detail?: string;
-        };
-        throw new Error(
-          `Optimization Error: ${err.detail ?? optRes.statusText}`,
-        );
-      }
-
-      const corrJson: CorrelationResponse = await corrRes.json();
-      const optJson: OptimizeResponse = await optRes.json();
-
-      // 2. Con los pesos óptimos calculados, ejecutar la simulación de Monte Carlo
-      const mcPayload: MonteCarloRequestPayload = {
-        tickers: selectedTickers,
-        days_to_predict: Number(daysToPredict),
-        simulations: Number(simulations),
-        weights: optJson.weights,
-      };
-
-      const mcRes = await fetch(`${API_BASE}/api/monte-carlo`, {
+      const response = await fetch(`${API_BASE}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(mcPayload),
+        body: JSON.stringify(payload),
       });
 
-      if (!mcRes.ok) {
-        const err = (await mcRes.json().catch(() => ({}))) as {
-          detail?: string;
-        };
-        throw new Error(`Monte Carlo Error: ${err.detail ?? mcRes.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Analysis Error: ${await parseApiError(response)}`);
       }
 
-      const mcJson: MonteCarloResponse = await mcRes.json();
+      const data: AnalysisResponse = await response.json();
 
-      setCorrData(corrJson);
-      setOptData(optJson);
-      setMcData(mcJson);
+      setCorrData(data.correlation);
+      setOptData(data.optimization);
+      setMcData(data.monte_carlo);
     } catch (err: unknown) {
       if (err instanceof Error) {
         setErrorMsg(err.message);
       } else {
-        setErrorMsg("Failed to connect to backend APIs.");
+        setErrorMsg("Failed to connect to backend API.");
       }
     } finally {
       setLoading(false);
@@ -411,7 +398,7 @@ function App() {
               <select
                 value={objective}
                 onChange={(e) =>
-                  setObjective(e.target.value as "min_variance" | "max_sharpe")
+                  setObjective(e.target.value as OptimizationObjective)
                 }
               >
                 <option value="min_variance">

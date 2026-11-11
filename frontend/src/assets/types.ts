@@ -1,9 +1,60 @@
+// ---------------------------------------------------------------------------
+// Shared API contracts
+// ---------------------------------------------------------------------------
+
+export type OptimizationObjective = "min_variance" | "max_sharpe";
+
+/** Payload único enviado a POST /api/analyze. */
+export interface AnalysisRequestPayload {
+  tickers: string[];
+  days_to_predict: number;
+  simulations: number;
+  objective: OptimizationObjective;
+  risk_free_rate: number;
+}
+
+// ---------------------------------------------------------------------------
+// Correlation
+// ---------------------------------------------------------------------------
+
 export interface CorrelationResponse {
   tickers: string[];
   observations: number;
   method: string;
   correlation_matrix: Record<string, Record<string, number>>;
 }
+
+// ---------------------------------------------------------------------------
+// Portfolio optimization
+// ---------------------------------------------------------------------------
+
+export interface OptimizationMetrics {
+  expected_annual_return: number;
+  annual_variance: number;
+  annual_volatility: number;
+  sharpe_ratio: number | null;
+  risk_free_rate: number;
+  weights_sum: number;
+}
+
+export interface OptimizationConstraints {
+  long_only: boolean;
+  minimum_weight: number;
+  maximum_weight: number;
+  weights_sum_to_one: boolean;
+}
+
+export interface OptimizeResponse {
+  objective: OptimizationObjective;
+  tickers: string[];
+  weights: Record<string, number>;
+  metrics: OptimizationMetrics;
+  constraints: OptimizationConstraints;
+}
+
+// ---------------------------------------------------------------------------
+// Monte Carlo simulation
+// ---------------------------------------------------------------------------
 
 export interface MonteCarloStatistics {
   mean_terminal_value: number;
@@ -24,29 +75,20 @@ export interface MonteCarloResponse {
   statistics: MonteCarloStatistics;
 }
 
-export interface OptimizationMetrics {
-  expected_annual_return: number;
-  annual_variance: number;
-  annual_volatility: number;
-  sharpe_ratio: number | null;
-  risk_free_rate: number;
-  weights_sum: number;
-}
+// ---------------------------------------------------------------------------
+// Analysis (single-endpoint response)
+// ---------------------------------------------------------------------------
 
-export interface OptimizationConstraints {
-  long_only: boolean;
-  minimum_weight: number;
-  maximum_weight: number;
-  weights_sum_to_one: boolean;
-}
-
-export interface OptimizeResponse {
-  objective: "min_variance" | "max_sharpe";
+export interface AnalysisResponse {
   tickers: string[];
-  weights: Record<string, number>;
-  metrics: OptimizationMetrics;
-  constraints: OptimizationConstraints;
+  correlation: CorrelationResponse;
+  optimization: OptimizeResponse;
+  monte_carlo: MonteCarloResponse;
 }
+
+// ---------------------------------------------------------------------------
+// UI view models
+// ---------------------------------------------------------------------------
 
 export interface SectorTickerWeight {
   ticker: string;
@@ -59,23 +101,4 @@ export interface SectorAllocation {
   percentage: number;
   color: string;
   tickers: SectorTickerWeight[];
-}
-
-export interface PortfolioRequestPayload {
-  tickers: string[];
-  days_to_predict: number;
-  simulations: number;
-}
-
-export interface OptimizeRequestPayload {
-  tickers: string[];
-  objective: "min_variance" | "max_sharpe";
-  risk_free_rate: number;
-}
-
-export interface MonteCarloRequestPayload {
-  tickers: string[];
-  days_to_predict: number;
-  simulations: number;
-  weights: Record<string, number>;
 }

@@ -1,29 +1,24 @@
 import React from "react";
-import type { CorrelationResponse } from "./types";
+import type { CorrelationMatrixVisualProps } from "../../types/correlationOptimization";
 
-export interface CorrelationMatrixVisualProps {
-  data: CorrelationResponse | null;
-  loading?: boolean;
-}
-
-const getHeatmapColor = (val: number): string => {
-  if (val >= 1) return "rgba(59, 130, 246, 0.9)";
-  if (val >= 0.7) return "rgba(16, 185, 129, 0.75)";
-  if (val >= 0.4) return "rgba(52, 211, 153, 0.45)";
-  if (val >= 0.1) return "rgba(251, 191, 36, 0.35)";
-  if (val >= -0.1) return "rgba(148, 163, 184, 0.25)";
+const getHeatmapColor = (value: number): string => {
+  if (value >= 1) return "rgba(59, 130, 246, 0.9)";
+  if (value >= 0.7) return "rgba(16, 185, 129, 0.75)";
+  if (value >= 0.4) return "rgba(52, 211, 153, 0.45)";
+  if (value >= 0.1) return "rgba(251, 191, 36, 0.35)";
+  if (value >= -0.1) return "rgba(148, 163, 184, 0.25)";
   return "rgba(239, 68, 68, 0.55)";
 };
 
-export const CorrelationMatrixVisual: React.FC<CorrelationMatrixVisualProps> = ({
-  data,
-  loading = false,
-}) => {
+export const CorrelationMatrixVisual: React.FC<
+  CorrelationMatrixVisualProps
+> = ({ data, loading = false }) => {
   return (
     <section className="dashboard-section">
       <h2>3. Daily Returns Correlation Matrix (Pearson)</h2>
       <p className="instruction">
-        Observations analyzed: {data?.observations ?? 0} common historical trading dates.
+        Observations analyzed: {data?.observations ?? 0} common historical
+        trading dates.
       </p>
 
       {data?.correlation_matrix ? (
@@ -42,15 +37,16 @@ export const CorrelationMatrixVisual: React.FC<CorrelationMatrixVisualProps> = (
                 <tr key={rowTicker}>
                   <td className="sticky-col ticker-row-header">{rowTicker}</td>
                   {data.tickers.map((colTicker) => {
-                    const val = data.correlation_matrix[rowTicker]?.[colTicker] ?? 0;
+                    const value =
+                      data.correlation_matrix[rowTicker]?.[colTicker] ?? 0;
                     return (
                       <td
                         key={colTicker}
-                        style={{ backgroundColor: getHeatmapColor(val) }}
+                        style={{ backgroundColor: getHeatmapColor(value) }}
                         className="corr-cell"
-                        title={`Correlation between ${rowTicker} and ${colTicker}: ${val.toFixed(4)}`}
+                        title={`Correlation between ${rowTicker} and ${colTicker}: ${value.toFixed(4)}`}
                       >
-                        {val.toFixed(2)}
+                        {value.toFixed(2)}
                       </td>
                     );
                   })}

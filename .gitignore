@@ -89,3 +89,6 @@ tmp/
 # Not required files
 backend/lol.py
 backend/tickers.csv
+
+#Agent guide
+AGENT_GUIDE.md

@@ -1,18 +1,10 @@
 import React from "react";
-import type { OptimizeResponse, SectorAllocation } from "./types";
+import type { PortfolioOptimizationVisualProps } from "../../types/correlationOptimization";
 import { SectorDistributionVisual } from "./SectorDistributionVisual";
 
-export interface PortfolioOptimizationVisualProps {
-  data: OptimizeResponse | null;
-  sectorAllocations?: SectorAllocation[];
-  loading?: boolean;
-}
-
-export const PortfolioOptimizationVisual: React.FC<PortfolioOptimizationVisualProps> = ({
-  data,
-  sectorAllocations = [],
-  loading = false,
-}) => {
+export const PortfolioOptimizationVisual: React.FC<
+  PortfolioOptimizationVisualProps
+> = ({ data, sectorAllocations = [], loading = false }) => {
   return (
     <section className="dashboard-section">
       <h2>4. Portfolio Optimization (Markowitz SLSQP)</h2>
@@ -82,20 +74,22 @@ export const PortfolioOptimizationVisual: React.FC<PortfolioOptimizationVisualPr
               {Object.entries(data.weights)
                 .sort(([, a], [, b]) => b - a)
                 .map(([ticker, weight]) => {
-                  const pct = weight * 100;
+                  const percentage = weight * 100;
                   return (
                     <tr key={ticker}>
                       <td className="opt-ticker-cell">
                         <strong>{ticker}</strong>
                       </td>
-                      <td className="opt-pct-cell">{pct.toFixed(2)}%</td>
+                      <td className="opt-pct-cell">
+                        {percentage.toFixed(2)}%
+                      </td>
                       <td className="opt-val-cell">{weight.toFixed(6)}</td>
                       <td className="opt-bar-cell">
                         <div className="bar-track">
                           <div
                             className="bar-fill"
                             style={{
-                              width: `${Math.min(100, Math.max(5, pct))}%`,
+                              width: `${Math.min(100, Math.max(5, percentage))}%`,
                             }}
                           />
                         </div>

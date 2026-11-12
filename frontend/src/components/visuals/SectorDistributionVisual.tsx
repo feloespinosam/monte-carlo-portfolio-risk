@@ -1,13 +1,9 @@
 import React from "react";
-import type { SectorAllocation } from "./types";
+import type { SectorDistributionVisualProps } from "../../types/correlationOptimization";
 
-export interface SectorDistributionVisualProps {
-  allocations: SectorAllocation[];
-}
-
-export const SectorDistributionVisual: React.FC<SectorDistributionVisualProps> = ({
-  allocations,
-}) => {
+export const SectorDistributionVisual: React.FC<
+  SectorDistributionVisualProps
+> = ({ allocations }) => {
   if (allocations.length === 0) {
     return null;
   }
@@ -21,7 +17,6 @@ export const SectorDistributionVisual: React.FC<SectorDistributionVisualProps> =
         </span>
       </div>
 
-      {/* Multi-color stacked proportional bar */}
       <div className="sector-progress-bar">
         {allocations.map((item) => (
           <div
@@ -31,7 +26,7 @@ export const SectorDistributionVisual: React.FC<SectorDistributionVisualProps> =
               width: `${item.percentage}%`,
               backgroundColor: item.color,
             }}
-            title={`${item.sector}: ${item.percentage.toFixed(2)}% (${item.tickers.map((t) => t.ticker).join(", ")})`}
+            title={`${item.sector}: ${item.percentage.toFixed(2)}% (${item.tickers.map((ticker) => ticker.ticker).join(", ")})`}
           >
             {item.percentage >= 7 && (
               <span className="sector-segment-label">
@@ -42,7 +37,6 @@ export const SectorDistributionVisual: React.FC<SectorDistributionVisualProps> =
         ))}
       </div>
 
-      {/* Sector legend with tags and percentages */}
       <div className="sector-legend">
         {allocations.map((item) => (
           <div key={item.sector} className="sector-legend-item">
@@ -55,7 +49,7 @@ export const SectorDistributionVisual: React.FC<SectorDistributionVisualProps> =
               {item.percentage.toFixed(2)}%
             </span>
             <span className="sector-legend-tickers">
-              ({item.tickers.map((t) => t.ticker).join(", ")})
+              ({item.tickers.map((ticker) => ticker.ticker).join(", ")})
             </span>
           </div>
         ))}

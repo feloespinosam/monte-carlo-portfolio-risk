@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import yfinance as yf
 import numpy as np
 import pandas as pd
@@ -28,6 +28,15 @@ class AnalysisRequest(BaseModel):
     simulations: int = Field(default=1000, ge=100, le=5000)
     objective: Literal["min_variance", "max_sharpe"] = "min_variance"
     risk_free_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    initial_investment: float = Field(default=10000.0, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_investment_alias(cls, data):
+        if isinstance(data, dict):
+            if "investment_amount" in data and "initial_investment" not in data:
+                data["initial_investment"] = data["investment_amount"]
+        return data
 
     @field_validator("tickers")
     @classmethod
@@ -329,11 +338,69 @@ def simulate_portfolio(
         },
     }
 
-# ENDPOINT: FULL ANALYSIS (correlation + optimization + Monte Carlo)
+def calculate_historical_performance(
+    prices: pd.DataFrame,
+    weights: np.ndarray,
+    tickers: list[str],
+    initial_investment: float,
+) -> dict:
+    """Calculate 2-year historical prices and portfolio dollar valuation."""
+
+    dates = [
+        d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
+        for d in prices.index
+    ]
+
+    base_prices = prices.iloc[0].to_numpy()
+    base_prices_safe = np.where(base_prices <= 0, 1e-6, base_prices)
+    price_relatives = prices.to_numpy() / base_prices_safe
+
+    # Portfolio dollar valuation: initial_investment * sum(w_i * P_i(t) / P_i(0))
+    portfolio_values = (initial_investment * (price_relatives @ weights)).round(2).tolist()
+
+    raw_prices_dict = {
+        ticker: prices[ticker].round(2).tolist()
+        for ticker in tickers
+    }
+
+    normalized_ticker_values = {
+        ticker: (initial_investment * (prices[ticker].to_numpy() / base_prices_safe[i])).round(2).tolist()
+        for i, ticker in enumerate(tickers)
+    }
+
+    allocated_ticker_values = {
+        ticker: ((initial_investment * weights[i]) * (prices[ticker].to_numpy() / base_prices_safe[i])).round(2).tolist()
+        for i, ticker in enumerate(tickers)
+    }
+
+    initial_val = round(float(portfolio_values[0]), 2)
+    final_val = round(float(portfolio_values[-1]), 2)
+    total_profit_loss = round(final_val - initial_val, 2)
+    total_return_pct = round((final_val - initial_val) / initial_val, 4) if initial_val > 0 else 0.0
+
+    return {
+        "dates": dates,
+        "tickers": tickers,
+        "initial_investment": initial_investment,
+        "portfolio_values": portfolio_values,
+        "prices": raw_prices_dict,
+        "normalized_values": normalized_ticker_values,
+        "allocated_values": allocated_ticker_values,
+        "statistics": {
+            "initial_value": initial_val,
+            "final_value": final_val,
+            "total_profit_loss": total_profit_loss,
+            "total_return_pct": total_return_pct,
+            "min_portfolio_value": round(float(np.min(portfolio_values)), 2),
+            "max_portfolio_value": round(float(np.max(portfolio_values)), 2),
+        },
+    }
+
+# ENDPOINT: FULL ANALYSIS (correlation + optimization + Monte Carlo + historical prices)
 
 @app.post("/api/analyze")
 def analyze_endpoint(request: AnalysisRequest):
-    """Una sola descarga de precios alimenta los tres cálculos."""
+    """Una sola descarga de precios alimenta los cuatro cálculos."""
 
     # 1. Download prices once and derive daily returns.
     prices = get_historical_data(request.tickers)
@@ -368,8 +435,19 @@ def analyze_endpoint(request: AnalysisRequest):
         n_sims=request.simulations,
     )
 
+    # 5. Historical 2-year prices and dollar performance
+    historical_performance = calculate_historical_performance(
+        prices=prices,
+        weights=optimal_weights,
+        tickers=request.tickers,
+        initial_investment=request.initial_investment,
+    )
+
     return {
         "tickers": request.tickers,
+        "initial_investment": request.initial_investment,
+        "investment_amount": request.initial_investment,
+        "historical_prices": historical_performance,
         "correlation": {
             "tickers": request.tickers,
             "observations": len(returns),

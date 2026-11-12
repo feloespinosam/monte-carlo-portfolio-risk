@@ -11,6 +11,7 @@ export interface AnalysisRequestPayload {
   simulations: number;
   objective: OptimizationObjective;
   risk_free_rate: number;
+  initial_investment: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,29 +77,39 @@ export interface MonteCarloResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Historical Prices & Portfolio Performance (2 years)
+// ---------------------------------------------------------------------------
+
+export interface HistoricalPricesStatistics {
+  initial_value: number;
+  final_value: number;
+  total_profit_loss: number;
+  total_return_pct: number;
+  min_portfolio_value: number;
+  max_portfolio_value: number;
+}
+
+export interface HistoricalPricesResponse {
+  dates: string[];
+  tickers: string[];
+  initial_investment: number;
+  portfolio_values: number[];
+  prices: Record<string, number[]>;
+  normalized_values: Record<string, number[]>;
+  allocated_values: Record<string, number[]>;
+  statistics: HistoricalPricesStatistics;
+}
+
+// ---------------------------------------------------------------------------
 // Analysis (single-endpoint response)
 // ---------------------------------------------------------------------------
 
 export interface AnalysisResponse {
   tickers: string[];
+  initial_investment: number;
+  investment_amount?: number;
+  historical_prices: HistoricalPricesResponse;
   correlation: CorrelationResponse;
   optimization: OptimizeResponse;
   monte_carlo: MonteCarloResponse;
-}
-
-// ---------------------------------------------------------------------------
-// UI view models
-// ---------------------------------------------------------------------------
-
-export interface SectorTickerWeight {
-  ticker: string;
-  weight: number;
-}
-
-export interface SectorAllocation {
-  sector: string;
-  weight: number;
-  percentage: number;
-  color: string;
-  tickers: SectorTickerWeight[];
 }

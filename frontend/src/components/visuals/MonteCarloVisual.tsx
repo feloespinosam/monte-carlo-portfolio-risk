@@ -13,7 +13,7 @@ import {
   type LegendItem,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
-import type { MonteCarloResponse } from "./types";
+import type { MonteCarloVisualProps } from "../../types/monteCarlo";
 
 ChartJS.register(
   CategoryScale,
@@ -25,31 +25,25 @@ ChartJS.register(
   Legend,
 );
 
-export interface MonteCarloVisualProps {
-  data: MonteCarloResponse | null;
-  loading?: boolean;
-  initialDisplayPaths?: number;
-}
-
 export const MonteCarloVisual: React.FC<MonteCarloVisualProps> = ({
   data,
   loading = false,
   initialDisplayPaths = 40,
 }) => {
-  const [maxDisplayPaths, setMaxDisplayPaths] = useState<number>(initialDisplayPaths);
+  const [maxDisplayPaths, setMaxDisplayPaths] =
+    useState<number>(initialDisplayPaths);
 
   const chartData = useMemo<ChartData<"line"> | null>(() => {
     if (!data) return null;
 
-    const labels = data.days.map((d) => `Day ${d}`);
+    const labels = data.days.map((day) => `Day ${day}`);
     const datasets: ChartData<"line">["datasets"] = [];
 
-    // Individual sample trajectories
     const sampledTrajectories = data.trajectories.slice(0, maxDisplayPaths);
-    sampledTrajectories.forEach((traj, idx) => {
+    sampledTrajectories.forEach((trajectory, index) => {
       datasets.push({
-        label: `Path ${idx + 1}`,
-        data: traj,
+        label: `Path ${index + 1}`,
+        data: trajectory,
         borderColor: "rgba(99, 102, 241, 0.18)",
         borderWidth: 1,
         pointRadius: 0,
@@ -58,7 +52,6 @@ export const MonteCarloVisual: React.FC<MonteCarloVisualProps> = ({
       });
     });
 
-    // Key percentile bands
     if (data.percentile_bands) {
       if (data.percentile_bands["95"]) {
         datasets.push({
@@ -151,7 +144,9 @@ export const MonteCarloVisual: React.FC<MonteCarloVisualProps> = ({
           <select
             id="display-paths-select"
             value={maxDisplayPaths}
-            onChange={(e) => setMaxDisplayPaths(Number(e.target.value))}
+            onChange={(event) =>
+              setMaxDisplayPaths(Number(event.target.value))
+            }
           >
             <option value={20}>20 paths</option>
             <option value={40}>40 paths</option>
@@ -169,7 +164,8 @@ export const MonteCarloVisual: React.FC<MonteCarloVisualProps> = ({
               {(data.statistics.mean_terminal_value * 100).toFixed(2)}%
             </span>
             <span className="stat-sub">
-              Return: {((data.statistics.mean_terminal_value - 1) * 100).toFixed(2)}%
+              Return:{" "}
+              {((data.statistics.mean_terminal_value - 1) * 100).toFixed(2)}%
             </span>
           </div>
           <div className="stat-card">
